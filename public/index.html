@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="uz"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1">
+<title>Taksi buyurtma</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;font-family:-apple-system,system-ui,Segoe UI,Roboto,sans-serif;background:#f2f4f7;color:#14202e}
+#app{display:flex;flex-direction:column;height:100dvh}
+#map{flex:1;min-height:180px;position:relative}
+#gps{position:absolute;right:10px;bottom:12px;z-index:500;width:46px;height:46px;border-radius:50%;border:0;background:#fff;font-size:22px;box-shadow:0 2px 10px #0004}
+#sheet{background:#fff;border-radius:18px 18px 0 0;box-shadow:0 -4px 18px #0003;padding:12px 14px calc(14px + env(safe-area-inset-bottom,0px));max-height:62dvh;overflow:auto;position:relative;z-index:600}
+.f{display:flex;align-items:center;gap:8px;border:2px solid #e3e8ef;border-radius:12px;padding:0 10px;margin-bottom:8px;background:#fff}
+.f.on{border-color:#ffb300;background:#fffaf0}
+.f i{font-style:normal;font-size:18px}
+.f input{flex:1;border:0;outline:0;background:transparent;font-size:16px;padding:12px 0;min-width:0}
+.res{margin:-4px 0 8px;border:1px solid #e3e8ef;border-radius:12px;overflow:hidden}
+.res div{padding:10px 12px;font-size:14px;border-bottom:1px solid #eef1f5}.res div:last-child{border:0}
+.res div:active{background:#fff3d6}
+.inf{display:flex;justify-content:space-between;align-items:center;background:#f6f8fb;border-radius:12px;padding:10px 12px;margin:2px 0 10px}
+.inf b{font-size:22px}.inf small{color:#5b6b7e}
+.row{display:flex;gap:8px}.row .f{flex:1}
+button.go{width:100%;border:0;border-radius:14px;padding:15px;font-size:17px;font-weight:700;background:#ffc400;color:#1b1b1b}
+button.go:disabled{background:#e6e9ee;color:#98a3b2}
+.err{color:#d32f2f;font-size:14px;margin:6px 2px;min-height:18px}
+.hp{position:absolute;left:-9999px;opacity:0}
+.ok{text-align:center;padding:10px 4px}.ok .big{font-size:54px}
+.pin{width:30px;height:30px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:3px solid #fff;box-shadow:0 2px 6px #0006;display:flex;align-items:center;justify-content:center}
+.pin span{transform:rotate(45deg);color:#fff;font-weight:800;font-size:13px}
+</style></head><body>
+<div id="app">
+  <div id="map"><button id="gps" aria-label="Mening joylashuvim">📍</button></div>
+  <div id="sheet">
+    <div id="form">
+      <div class="f on" id="fa"><i>🟢</i><input id="ia" placeholder="Qayerdan? (xaritadan tanlang yoki yozing)" autocomplete="off"></div>
+      <div class="f" id="fb"><i>🔴</i><input id="ib" placeholder="Qayerga?" autocomplete="off"></div>
+      <div class="res" id="res" style="display:none"></div>
+      <div class="inf" id="inf" style="display:none"><span><b id="pr">—</b><br><small id="kmx"></small></span><span style="font-size:30px">🚕</span></div>
+      <div class="row"><div class="f"><i>👤</i><input id="nm" placeholder="Ismingiz" maxlength="40" autocomplete="name"></div></div>
+      <div class="f"><i>📞</i><input id="ph" type="tel" inputmode="tel" placeholder="+998 90 123 45 67" maxlength="19" autocomplete="tel"></div>
+      <div class="f"><i>🗒</i><input id="nt" placeholder="Izoh (ixtiyoriy)" maxlength="120"></div>
+      <input class="hp" id="hp" tabindex="-1" autocomplete="off">
+      <div class="err" id="er"></div>
+      <button class="go" id="go" disabled>Buyurtma berish</button>
+    </div>
+    <div class="ok" id="done" style="display:none">
+      <div class="big">✅</div><h2 style="margin:6px 0">Buyurtma yuborildi!</h2>
+      <p id="dm" style="color:#5b6b7e;margin:4px 0 14px">Haydovchi topilgach, sizga xabar keladi.</p>
+      <button class="go" id="again">Yangi buyurtma</button>
+    </div>
+  </div>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function(){
+'use strict';
+var $=function(s){return document.querySelector(s)};
+var TW=window.Telegram&&Telegram.WebApp;if(TW){try{TW.ready();TW.expand()}catch(e){}}
+var CFG={base:5000,perKm:2000,min:8000,round:500,center:[41.3111,69.2797],maxKm:80};
+var P={from:null,to:null},active='from',route=null,busy=false,sending=false;
+var fmt=function(n){return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g,' ')};
+function priceOf(km){var p=Math.round((CFG.base+Math.max(0,km-1)*CFG.perKm)/CFG.round)*CFG.round;return Math.max(CFG.min,p)}
+function hav(a,b){var R=6371,r=function(x){return x*Math.PI/180},dl=r(b.lat-a.lat),dg=r(b.lng-a.lng),h=Math.sin(dl/2)*Math.sin(dl/2)+Math.cos(r(a.lat))*Math.cos(r(b.lat))*Math.sin(dg/2)*Math.sin(dg/2);return 2*R*Math.asin(Math.sqrt(h))}
+function jf(url,ms){var c=new AbortController(),t=setTimeout(function(){c.abort()},ms||7000);return fetch(url,{signal:c.signal}).then(function(r){clearTimeout(t);return r.json()})}
+
+/* ---- xarita ---- */
+var map=L.map('map',{zoomControl:false,attributionControl:true}).setView(CFG.center,13);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+var mk={},line=null;
+function icon(c,t){return L.divIcon({className:'',html:'<div class="pin" style="background:'+c+'"><span>'+t+'</span></div>',iconSize:[30,30],iconAnchor:[15,30]})}
+function setPoint(w,lat,lng,addr,fly){
+  P[w]={lat:lat,lng:lng,addr:addr||''};
+  if(mk[w])mk[w].setLatLng([lat,lng]);else mk[w]=L.marker([lat,lng],{icon:icon(w==='from'?'#2e9e4f':'#e53935',w==='from'?'A':'B')}).addTo(map);
+  if(fly)map.setView([lat,lng],Math.max(map.getZoom(),15));
+  $(w==='from'?'#ia':'#ib').value=addr||(lat.toFixed(5)+', '+lng.toFixed(5));
+  if(!addr)rev(w,lat,lng);
+  if(w==='from'&&!P.to)act('to');
+  calc();
+}
+function rev(w,lat,lng){
+  jf('https://nominatim.openstreetmap.org/reverse?format=jsonv2&accept-language=uz&zoom=18&lat='+lat+'&lon='+lng,6000).then(function(d){
+    var a=d&&d.address||{},s=[a.road||a.pedestrian||a.neighbourhood||'',a.house_number||'',a.suburb||a.city_district||a.city||a.town||''].filter(Boolean).join(', ')||(d&&d.display_name||'').split(',').slice(0,2).join(',');
+    if(P[w]&&P[w].lat===lat&&P[w].lng===lng&&s){P[w].addr=s.slice(0,120);$(w==='from'?'#ia':'#ib').value=P[w].addr}
+  }).catch(function(){});
+}
+function act(w){active=w;$('#fa').classList.toggle('on',w==='from');$('#fb').classList.toggle('on',w==='to')}
+map.on('click',function(e){setPoint(active,e.latlng.lat,e.latlng.lng,'',false)});
+$('#gps').onclick=function(){
+  if(!navigator.geolocation)return err('Joylashuvni aniqlab bo‘lmadi');
+  navigator.geolocation.getCurrentPosition(function(p){act('from');setPoint('from',p.coords.latitude,p.coords.longitude,'',true)},function(){err('Joylashuvga ruxsat bering yoki xaritadan tanlang')},{enableHighAccuracy:true,timeout:9000});
+};
+/* ---- qidiruv ---- */
+var st=null;
+function search(q,w){
+  var box=$('#res');if(q.length<3){box.style.display='none';return}
+  var c=map.getCenter(),v=(c.lng-.6)+','+(c.lat+.5)+','+(c.lng+.6)+','+(c.lat-.5);
+  jf('https://nominatim.openstreetmap.org/search?format=jsonv2&accept-language=uz&countrycodes=uz&limit=5&viewbox='+v+'&q='+encodeURIComponent(q),7000).then(function(a){
+    box.innerHTML='';if(!a||!a.length){box.style.display='none';return}
+    a.forEach(function(x){var d=document.createElement('div');d.textContent=x.display_name.split(',').slice(0,3).join(',');d.onclick=function(){box.style.display='none';setPoint(w,+x.lat,+x.lon,d.textContent.slice(0,120),true)};box.appendChild(d)});
+    box.style.display='block';
+  }).catch(function(){});
+}
+['a','b'].forEach(function(k){var w=k==='a'?'from':'to',el=$('#i'+k);
+  el.addEventListener('focus',function(){act(w)});
+  el.addEventListener('input',function(){clearTimeout(st);var v=el.value.trim();st=setTimeout(function(){search(v,w)},650)});
+});
+/* ---- yo'l va narx ---- */
+function calc(){
+  var inf=$('#inf');
+  if(!P.from||!P.to){inf.style.display='none';route=null;chk();return}
+  var air=hav(P.from,P.to),my=P.from.lat+','+P.from.lng+P.to.lat+','+P.to.lng;
+  route={km:Math.max(.5,+(air*1.3).toFixed(1)),min:Math.max(2,Math.round(air*1.3*2.5)),key:my};show();
+  jf('https://router.project-osrm.org/route/v1/driving/'+P.from.lng+','+P.from.lat+';'+P.to.lng+','+P.to.lat+'?overview=full&geometries=geojson',6500).then(function(d){
+    if(!d||!d.routes||!d.routes[0]||route.key!==my)return;var r=d.routes[0];
+    route={km:Math.max(.5,+(r.distance/1000).toFixed(1)),min:Math.max(2,Math.round(r.duration/60)),key:my};
+    if(line)map.removeLayer(line);line=L.polyline(r.geometry.coordinates.map(function(c){return[c[1],c[0]]}),{color:'#1976d2',weight:5,opacity:.85}).addTo(map);
+    try{map.fitBounds(line.getBounds(),{padding:[40,40]})}catch(e){}show();
+  }).catch(function(){});
+}
+function show(){
+  var inf=$('#inf');inf.style.display='flex';
+  if(route.km>CFG.maxKm){$('#pr').textContent='Juda uzoq';$('#kmx').textContent=CFG.maxKm+' km gacha buyurtma qilinadi'}
+  else{$('#pr').textContent=fmt(priceOf(route.km))+' so‘m';$('#kmx').textContent='~'+route.km+' km · ~'+route.min+' daqiqa'}
+  chk();
+}
+/* ---- forma ---- */
+function phoneD(v){var d=String(v).replace(/\D/g,'');if(d.length===9)d='998'+d;return /^998\d{9}$/.test(d)?d:''}
+function chk(){$('#go').disabled=!(P.from&&P.to&&route&&route.km<=CFG.maxKm&&phoneD($('#ph').value))||sending;var p=route&&route.km<=CFG.maxKm?' · '+fmt(priceOf(route.km))+' so‘m':'';$('#go').textContent=sending?'Yuborilmoqda...':'Buyurtma berish'+p}
+function err(m){$('#er').textContent=m||''}
+$('#ph').addEventListener('input',function(){var d=this.value.replace(/\D/g,'');if(d.indexOf('998')===0)d=d.slice(3);d=d.slice(0,9);var o='+998';if(d)o+=' '+d.slice(0,2);if(d.length>2)o+=' '+d.slice(2,5);if(d.length>5)o+=' '+d.slice(5,7);if(d.length>7)o+=' '+d.slice(7,9);this.value=d?o:'';chk()});
+try{var sv=JSON.parse(localStorage.getItem('taxi_u')||'{}');if(sv.n)$('#nm').value=sv.n;if(sv.p){$('#ph').value=sv.p}}catch(e){}
+try{var u=TW&&TW.initDataUnsafe&&TW.initDataUnsafe.user;if(u&&!$('#nm').value)$('#nm').value=[u.first_name,u.last_name].filter(Boolean).join(' ').slice(0,40)}catch(e){}
+$('#go').onclick=function(){
+  if(sending)return;err('');
+  var ph=phoneD($('#ph').value);if(!ph)return err('Telefon raqamini to‘g‘ri kiriting');
+  if(!route||!P.from||!P.to)return err('Manzillarni tanlang');
+  sending=true;chk();
+  try{localStorage.setItem('taxi_u',JSON.stringify({n:$('#nm').value,p:$('#ph').value}))}catch(e){}
+  fetch('/api/order',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
+    from:P.from,to:P.to,km:route.km,min:route.min,phone:ph,name:$('#nm').value,note:$('#nt').value,hp:$('#hp').value,initData:TW&&TW.initData||''})})
+  .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j}})})
+  .then(function(x){sending=false;
+    if(x.ok&&x.j.ok){$('#form').style.display='none';$('#done').style.display='block';$('#dm').textContent='Buyurtma #'+x.j.id+' · '+fmt(x.j.price)+' so‘m. Haydovchi topilgach, sizga xabar keladi.';if(TW&&TW.HapticFeedback)try{TW.HapticFeedback.notificationOccurred('success')}catch(e){}}
+    else{err(x.j&&x.j.error||'Xatolik. Qayta urinib ko‘ring');chk()}})
+  .catch(function(){sending=false;err('Internet yo‘q yoki server javob bermadi');chk()});
+};
+$('#again').onclick=function(){$('#done').style.display='none';$('#form').style.display='block';['from','to'].forEach(function(w){if(mk[w]){map.removeLayer(mk[w]);delete mk[w]}P[w]=null});if(line){map.removeLayer(line);line=null}$('#ia').value=$('#ib').value=$('#nt').value='';route=null;act('from');calc();setTimeout(function(){map.invalidateSize()},200)};
+jf('/api/order',4000).then(function(c){if(c&&c.base){CFG=Object.assign(CFG,c);if(!P.from)map.setView(CFG.center,13);if(route)show()}}).catch(function(){});
+setTimeout(function(){map.invalidateSize()},300);window.addEventListener('resize',function(){map.invalidateSize()});
+chk();
+})();
+</script></body></html>
