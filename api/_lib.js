@@ -7,7 +7,11 @@ const CFG = {
   perKm: 2000,       // 1 km uchun (so'm)
   min: 8000,         // eng kam narx (so'm)
   round: 500,        // narx 500 so'mgacha yaxlitlanadi
-  feePct: 10,        // sizning komissiyangiz (%)
+  feePct: 7,         // sizning komissiyangiz (%). Yandex Go ~14.6% (2023), biz taxminan 2 barobar arzon
+  freeOrders: 3,     // yangi haydovchiga dastlabki bepul buyurtmalar soni
+  minTopup: 20000,   // balansni eng kam to'ldirish (so'm)
+  maxTopup: 5000000, // bir martalik eng ko'p to'ldirish (so'm)
+  cancelMin: 10,     // haydovchi buyurtmani necha daqiqa ichida bekor qila oladi
   maxKm: 80,         // bundan uzoq buyurtma qabul qilinmaydi
   center: [41.3111, 69.2797], // xarita markazi (Toshkent)
   bounds: { latMin: 37.0, latMax: 46.0, lngMin: 55.0, lngMax: 74.0 } // O'zbekiston atrofi
