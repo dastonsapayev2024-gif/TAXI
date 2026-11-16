@@ -1,0 +1,8 @@
+{
+  "name": "taksi",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Taksi buyurtma - Telegram Mini App",
+  "dependencies": { "pg": "^8.11.3" },
+  "engines": { "node": ">=18" }
+}
