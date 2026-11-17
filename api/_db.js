@@ -31,6 +31,10 @@ create table if not exists ledger(
 create index if not exists orders_driver_idx on orders(driver_id, created desc);
 
 alter table drivers add column if not exists car text not null default '';
+alter table drivers add column if not exists phone text not null default '';
+alter table drivers add column if not exists verified boolean not null default false;
+create table if not exists passengers(
+  tg_id bigint primary key, name text not null default '', phone text not null default '', created timestamptz not null default now());
 alter table orders add column if not exists token text not null default '';
 alter table orders add column if not exists tg_msg bigint;
 alter table orders add column if not exists dlat double precision;

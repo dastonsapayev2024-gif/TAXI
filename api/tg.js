@@ -33,7 +33,7 @@ async function onPrivate(m) {
 
   if (/^\/start(@\w+)?(\s+driver)?$/i.test(t)) {
     if (/driver/i.test(t)) {
-      await db.q('insert into drivers(tg_id,name,username,free_left) values($1,$2,$3,$4) on conflict (tg_id) do update set name=$2, username=$3', [from.id, nameOf(from), from.username || '', CFG.freeOrders]);
+      await db.q('insert into drivers(tg_id,name,username,free_left) values($1,$2,$3,$4) on conflict (tg_id) do update set name=case when drivers.phone<>\'\' then drivers.name else $2 end, username=$3', [from.id, nameOf(from), from.username || '', CFG.freeOrders]);
       const d = await driverOf(from.id);
       return send(chat, '🚕 <b>Xush kelibsiz, haydovchi ' + esc(nameOf(from)) + '!</b>\n\n' +
         '💼 Komissiya: faqat <b>' + CFG.feePct + '%</b> (boshqa xizmatlardan arzon)\n' +
@@ -41,9 +41,8 @@ async function onPrivate(m) {
         '💰 Balansingiz: <b>' + fmt(d.balance) + ' so‘m</b>\n\n' +
         'Buyurtmalarni <b>haydovchi ilovasida</b> ko‘rasiz va qabul qilasiz: raqam sizga ko‘rinadi, komissiya balansdan yechiladi. Noto‘g‘ri buyurtmani ' + CFG.cancelMin + ' daqiqa ichida bekor qilsangiz, komissiya qaytadi.', { reply_markup: MENU }).then(() => send(chat, '👇 Ilovani oching (birinchi marta mashina ma‘lumotini so‘raydi):', { reply_markup: { inline_keyboard: [[{ text: '🚕 Haydovchi ilovasi', web_app: { url: BASE + '/drv.html' } }]] } }));
     }
-    const app = String(process.env.APP_LINK || '').trim();
-    return send(chat, '🚕 <b>Baxu Taksi</b>\n\nTaksi buyurtma qilish uchun pastdagi tugmani bosing.\n\nHaydovchi bo‘lmoqchimisiz? /start driver deb yozing.',
-      app ? { reply_markup: { inline_keyboard: [[{ text: '🚕 Taksi chaqirish', url: app }]] } } : {});
+    return send(chat, '🚕 <b>Baxu Taksi</b>\n\nKim sifatida kirasiz? Pastdagi tugmalardan birini tanlang 👇',
+      { reply_markup: { inline_keyboard: [[{ text: '🚖 Yo‘lovchiman', web_app: { url: BASE + '/' } }], [{ text: '🚕 Haydovchiman', web_app: { url: BASE + '/drv.html' } }]] } });
   }
   if (/^\/id(@\w+)?$/.test(t)) return send(chat, 'Chat ID: ' + chat);
 

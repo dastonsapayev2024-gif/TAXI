@@ -2,6 +2,8 @@
 const { CFG, esc, tg, checkInit, closeGroup } = require('./_lib');
 const db = require('./_db');
 const OK_ID = /^[A-Za-z0-9]{4,12}$/;
+const cleanName = v => { const n = String(v || '').replace(/[<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 40); return n.split(' ').filter(w => w.length > 1).length >= 2 ? n : ''; };
+const phoneOf = v => { let d = String(v || '').replace(/\D/g, ''); if (d.length === 9) d = '998' + d; return /^998\d{9}$/.test(d) ? d : ''; };
 const nameOf = u => [u.first_name, u.last_name].filter(Boolean).join(' ').slice(0, 40) || 'Haydovchi';
 
 // Haydovchi ilovasi uchun yagona nuqta (Telegram initData bilan tekshiriladi)
@@ -18,7 +20,7 @@ module.exports = async (req, res) => {
 
     if (b.action === 'me') {
       const d = await drv();
-      if (!d) return res.status(200).json({ ok: true, registered: false, name: nameOf(u), cfg });
+      if (!d || !d.car || !d.phone) return res.status(200).json({ ok: true, registered: false, name: (d && d.phone ? d.name : '') || nameOf(u), phone: d ? d.phone : '', car: d ? d.car : '', cfg });
       const a = (await db.q("select id, price, fee_paid, km, phone, name, fromp, top, floor(extract(epoch from (now() - taken_at)))::int tage from orders where driver_id=$1 and status='taken' order by taken_at desc limit 1", [me])).rows[0] || null;
       return res.status(200).json({ ok: true, registered: true, blocked: d.blocked, name: d.name, car: d.car, balance: d.balance, free: d.free_left, cfg,
         active: a ? { id: a.id, price: a.price, fee: a.fee_paid, km: a.km, phone: a.phone, pname: a.name, from: a.fromp, to: a.top, canCancel: a.tage < CFG.cancelMin * 60 } : null });
@@ -26,12 +28,17 @@ module.exports = async (req, res) => {
     if (b.action === 'register') {
       const car = String(b.car || '').replace(/\s+/g, ' ').trim().slice(0, 60);
       if (car.length < 5) return res.status(400).json({ error: 'Mashina ma‘lumoti juda qisqa. Masalan: Cobalt, oq, 01 A 123 BC' });
-      await db.q('insert into drivers(tg_id,name,username,free_left,car) values($1,$2,$3,$4,$5) on conflict (tg_id) do update set name=$2, username=$3, car=$5',
-        [me, nameOf(u), u.username || '', CFG.freeOrders, car]);
+      const fname = cleanName(b.name);
+      if (!fname) return res.status(400).json({ error: 'Ism va familiyangizni to‘liq yozing (kamida 2 ta so‘z)' });
+      const phone = phoneOf(b.phone);
+      if (!phone) return res.status(400).json({ error: 'Telefon raqami noto‘g‘ri (masalan 90 123 45 67)' });
+      await db.q('insert into drivers(tg_id,name,username,free_left,car,phone) values($1,$2,$3,$4,$5,$6) on conflict (tg_id) do update set name=$2, username=$3, car=$5, phone=$6',
+        [me, fname, u.username || '', CFG.freeOrders, car, phone]);
       return res.status(200).json({ ok: true });
     }
     const d = await drv();
     if (!d) return res.status(403).json({ error: 'Avval ro‘yxatdan o‘ting' });
+    if (!d.phone || !d.car) return res.status(403).json({ error: 'Avval ro‘yxatdan o‘ting' });
     if (d.blocked) return res.status(403).json({ error: 'Hisobingiz bloklangan. Admin bilan bog‘laning.' });
 
     if (b.action === 'orders') {
