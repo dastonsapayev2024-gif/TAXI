@@ -56,6 +56,12 @@ function head(){var b=$('#bal');b.innerHTML=ME&&ME.registered?'Balans<b>'+F(ME.b
 
 function navRow(t,p){if(!p||p.lat==null||p.lng==null)return '';var ll=p.lat+','+p.lng;
  return '<div class="sub" style="margin-top:8px">'+t+'</div><div class="btns"><a class="btn l" data-x="https://yandex.com/maps/?rtext=~'+ll+'&rtt=auto" href="#">Yandex</a><a class="btn l" data-x="https://www.google.com/maps/dir/?api=1&destination='+ll+'&travelmode=driving" href="#">Google</a></div>'}
+function picked(id){try{return localStorage.getItem('pk_'+id)==='1'}catch(e){return false}}
+function navBig(a){var pk=picked(a.id),p=pk?a.to:a.from;if(!p||p.lat==null||p.lng==null)return '<a class="btn" href="/driver.html?o='+esc(a.id)+'">🧭 Navigatsiya (xarita)</a>';
+ var ll=p.lat+','+p.lng,y='https://yandex.com/maps/?rtext=~'+ll+'&rtt=auto',g='https://www.google.com/maps/dir/?api=1&destination='+ll+'&travelmode=driving';
+ return '<a class="btn" data-x="'+y+'" href="#">'+(pk?'🏁 Manzilga':'🧭 Yo‘lovchi oldiga')+'</a>'+
+  '<div class="sub" style="text-align:center;margin:6px 0">Yandex ochiladi · <a data-x="'+g+'" href="#">Google</a> · <a href="/driver.html?o='+esc(a.id)+'">ilova xaritasi</a></div>'+
+  (pk?'':'<button class="btn g" id="pk">✅ Yo‘lovchi o‘tirdi</button>')}
 function render(){head();var h='';
  if(!ME){return}
  if(!ME.registered){
@@ -71,8 +77,7 @@ function render(){head();var h='';
  if(a){h+='<div class="c act"><div class="row"><h3>🚕 Joriy buyurtma #'+esc(a.id)+'</h3><span class="tag g">Faol</span></div>'+
    '<div class="big">'+F(a.price)+' so‘m</div><div class="sub">Komissiya '+F(a.fee)+' · ~'+esc(a.km)+' km</div>'+
    '<div class="ad"><b>📍</b>'+ad(a.from)+'</div><div class="ad"><b>🏁</b>'+ad(a.to)+'</div>'+
-   '<a class="btn" href="/driver.html?o='+esc(a.id)+'">🧭 Navigatsiya (xarita)</a>'+
-   navRow('📍 Yo‘lovchi oldiga',a.from)+navRow('🏁 Manzilga',a.to)+
+   navBig(a)+
    '<div class="btns"><a class="btn l" href="tel:+998'+esc(String(a.phone).replace(/\D/g,''))+'">📞 '+esc(a.pname||'Yo‘lovchi')+'</a>'+
    (a.canCancel?'<button class="btn r" id="cx">'+(sure?'Ha, bekor':'❌ Bekor')+'</button>':'')+'</div>'+
    '<button class="btn g" id="dn">🏁 Safar tugadi</button></div>'}
@@ -94,7 +99,7 @@ function render(){head();var h='';
 
 function bind(){
  document.querySelectorAll('[data-a]').forEach(function(b){b.onclick=function(){accept(b.getAttribute('data-a'),b)}});
- var cx=$('#cx');if(cx)cx.onclick=cancel;var dn=$('#dn');if(dn)dn.onclick=done;
+ var cx=$('#cx');if(cx)cx.onclick=cancel;var dn=$('#dn');if(dn)dn.onclick=done;var pk=$('#pk');if(pk)pk.onclick=function(){try{localStorage.setItem('pk_'+ME.active.id,'1')}catch(e){}haptic();render()};
  document.querySelectorAll('[data-x]').forEach(function(x){x.onclick=function(ev){ev.preventDefault();var u=x.getAttribute('data-x');try{if(TW&&TW.openLink){TW.openLink(u);return}}catch(e){}window.open(u,'_blank')}});
  var ol=$('#ol');if(ol)ol.onclick=function(){var b=this;b.disabled=true;api({action:'online',on:!ME.online}).then(function(r){ME.online=r.online;haptic();toast(r.online?'🟢 Liniyadasiz':'Liniyadan chiqdingiz');render()}).catch(function(e){b.disabled=false;toast(e&&e.error||'Xatolik')})};
  $('#cb').onclick=function(){$('#ce').style.display='block';this.style.display='none'};
