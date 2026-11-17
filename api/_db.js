@@ -46,6 +46,9 @@ create table if not exists ln_msgs(order_id text not null, chat_id bigint not nu
 create index if not exists ln_msgs_o on ln_msgs(order_id);
 create table if not exists ln_pay(id serial primary key, driver_id bigint not null, amount bigint not null default 0, status text not null default 'pending', file_id text not null default '', created timestamptz not null default now(), decided timestamptz);
 create table if not exists ln_state(tg_id bigint primary key, st text not null default '', data jsonb not null default '{}', updated timestamptz not null default now());
+alter table ln_regions add column if not exists active boolean not null default true;
+alter table ln_users add column if not exists created timestamptz not null default now();
+alter table ln_users add column if not exists blocked boolean not null default false;
 do $seed$ declare x int; q int; begin
   if not exists (select 1 from ln_regions) then
     insert into ln_regions(parent_id,name,kind) values (null,'Xorazm','viloyat') returning id into x;
@@ -55,6 +58,7 @@ do $seed$ declare x int; q int; begin
     insert into ln_regions(parent_id,name,kind) values (x,'Urganch','tuman');
   end if;
 end $seed$;
+insert into ln_regions(parent_id,name,kind,active) select null, v, 'viloyat', false from unnest(array['Toshkent shahri','Toshkent viloyati','Samarqand','Buxoro','Navoiy','Qashqadaryo','Surxondaryo','Jizzax','Sirdaryo','Farg‘ona','Andijon','Namangan','Qoraqalpog‘iston']) as v on conflict do nothing;
 
 alter table drivers add column if not exists car text not null default '';
 alter table drivers add column if not exists phone text not null default '';
