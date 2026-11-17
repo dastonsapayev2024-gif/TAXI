@@ -70,7 +70,6 @@ async function regScreen(mode, nodeId) {
     rows.push([{ text: k.name + (deep ? ' ›' : ''), callback_data: (deep ? 'rg:' : 'rs:') + mode + ':' + k.id }]);
   }
   if (node && node.kind === 'tuman' && !TUMAN_ONLY(mode)) rows.push([{ text: '✅ Butun ' + node.name, callback_data: 'rs:' + mode + ':' + node.id }]);
-  if (mode === 'pt' || mode === 'tm') rows.push([{ text: '✍️ Boshqa joy (o‘zim yozaman)', callback_data: 'pw:0' }]);
   if (node) rows.push([{ text: '⬅️ Orqaga', callback_data: 'rg:' + mode + ':' + (node.parent_id || 0) }]);
   let hint;
   if (!node) hint = 'Viloyatni tanlang:';
