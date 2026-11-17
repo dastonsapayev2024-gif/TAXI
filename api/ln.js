@@ -15,7 +15,7 @@ const HOURS_ONLINE = 14;      // liniyada qolish muddati (soat)
 const ORDER_MIN = 20;         // buyurtma necha daqiqa amal qiladi
 const B = {
   taxi: '🚖 Taksi chaqirish', drv: '🚕 Haydovchiman', on: '🟢 Liniyaga chiqish', off: '🔴 Liniyadan chiqish',
-  pay: '💳 To‘lov', me: 'ℹ️ Holatim', adm: '🛠 Admin', cancel: '❌ Bekor', menu: '🏠 Menyu'
+  pay: '💳 To‘lov', me: 'ℹ️ Holatim', adm: '🛠 Admin', cancel: '❌ Bekor', menu: '🏠 Menyu', skip: '⏭ O‘tkazib yuborish'
 };
 
 // ---------- sozlamalar ----------
@@ -77,6 +77,7 @@ async function menuKb(id) {
   return { keyboard: rows, resize_keyboard: true };
 }
 const home = async (chat, text) => send(chat, text || 'Bosh menyu 👇', { reply_markup: await menuKb(chat) });
+const PHONE_ASK = '📞 Telefon raqamingizni yuboring (haydovchi qo‘ng‘iroq qiladi).\n\nPastdagi tugmani bosganda Telegram «ulashasizmi?» deb so‘raydi. Bu oddiy savol, <b>OK</b> bosing. Raqamingiz faqat haydovchiga ko‘rinadi.\n\n❗ Faqat bitta qoida: <b>SMS kodlarni hech kimga, botga ham yubormang.</b>\n\nYoki raqamni yozing: <code>90 123 45 67</code>';
 const WELCOME = 'Assalomu alaykum! 🚕 <b>Baxu Taksi</b>\n\n🚖 <b>Taksi chaqirish</b> — yo‘lovchi uchun\n🚕 <b>Haydovchiman</b> — haydovchi bo‘lish uchun (oyiga qat’iy to‘lov, komissiya yo‘q)';
 
 // ---------- yo'lovchi ----------
@@ -101,7 +102,7 @@ async function placeOrder(uid, pname, phone, data) {
   if (!ids.length) { await clrSt(uid); return home(uid, '😔 Hozir bu hududda liniyada haydovchi yo‘q. Birozdan keyin qayta urinib ko‘ring.'); }
   const id = newId(), where = data.k === 'viloyat'
     ? 'Qayerdan: <b>' + esc(await pathName(data.rid)) + '</b>\n🏁 Qayerga: <b>' + esc(data.to_text || '—') + '</b>'
-    : 'Hudud: <b>' + esc(await pathName(data.rid)) + '</b>';
+    : 'Hudud: <b>' + esc(await pathName(data.rid)) + '</b>' + (data.to_text ? '\n🏁 Qayerga: <b>' + esc(data.to_text) + '</b>' : '');
   await db.q('insert into ln_orders(id,uid,pname,phone,kind,region_id,to_text,addr,lat,lng) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
     [id, uid, pname, phone, data.k, data.rid, data.to_text || '', data.addr || '', data.lat == null ? null : data.lat, data.lng == null ? null : data.lng]);
   const text = '🚕 <b>Yangi buyurtma</b> #' + id + '\n📍 ' + where + '\n📌 Manzil: ' + esc(data.addr || 'Lokatsiya') + '\n👤 ' + esc(pname);
@@ -181,7 +182,7 @@ async function accept(q) {
     return answer(q, x && x.status === 'cancelled' ? 'Yo‘lovchi bekor qildi' : 'Boshqa haydovchi oldi', true);
   }
   await answer(q, 'Buyurtma sizniki ✅');
-  const where = o.kind === 'viloyat' ? 'Qayerdan: ' + esc(await pathName(o.region_id)) + '\n🏁 Qayerga: ' + esc(o.to_text || '—') : 'Hudud: ' + esc(await pathName(o.region_id));
+  const where = o.kind === 'viloyat' ? 'Qayerdan: ' + esc(await pathName(o.region_id)) + '\n🏁 Qayerga: ' + esc(o.to_text || '—') : 'Hudud: ' + esc(await pathName(o.region_id)) + (o.to_text ? '\n🏁 Qayerga: ' + esc(o.to_text) : '');
   const kb = [[{ text: '🏁 Tugadi', callback_data: 'ld:' + id }, { text: '❌ Bekor', callback_data: 'lc:' + id }]];
   if (o.lat != null) kb.unshift([{ text: '🗺 Xaritada ko‘rish', url: mapLink(o.lat, o.lng) }]);
   await edit(chat, mid, '✅ <b>Siz oldingiz</b> #' + id + '\n\n👤 ' + esc(o.pname) + '\n📞 <b>' + esc(showPhone(o.phone)) + '</b>\n📍 ' + where + '\n📌 ' + esc(o.addr || 'Lokatsiya') + '\n\nYo‘lovchi bilan bog‘lanib, borib oling. Narxni o‘zaro kelishasiz.', { reply_markup: { inline_keyboard: kb } });
@@ -299,6 +300,12 @@ async function adminCmd(chat, t) {
 }
 
 // ---------- asosiy kirish ----------
+async function afterAddr(chat, from, d) {
+  const u = (await db.q('select phone from ln_users where tg_id=$1', [chat])).rows[0];
+  if (u && u.phone) return placeOrder(chat, nameOf(from), u.phone, d);
+  await setSt(chat, 'p_phone', d);
+  return send(chat, PHONE_ASK, { reply_markup: { keyboard: [[{ text: '📞 Raqamni yuborish', request_contact: true }], [{ text: B.cancel }]], resize_keyboard: true } });
+}
 async function onMessage(m) {
   const chat = m.chat.id, from = m.from, t = (m.text || '').trim();
   const admin = isAdmin(from.id);
@@ -321,7 +328,7 @@ async function onMessage(m) {
   if (st === 'd_name') {
     if (t.split(/\s+/).filter(Boolean).length < 2) return send(chat, 'Ism va familiyangizni to‘liq yozing (kamida 2 ta so‘z).');
     d.name = t.slice(0, 40); await setSt(chat, 'd_phone', d);
-    return send(chat, '2/4 Telefon raqamingizni yuboring (pastdagi tugma) yoki yozing:', { reply_markup: { keyboard: [[{ text: '📞 Raqamni yuborish', request_contact: true }], [{ text: B.cancel }]], resize_keyboard: true } });
+    return send(chat, '2/4 📞 Telefon raqamingizni yuboring.\n\nPastdagi tugmani bosganda Telegram «ulashasizmi?» deb so‘raydi. Bu oddiy savol, <b>OK</b> bosing. Raqamingiz faqat haydovchiga ko‘rinadi.\n\n❗ Faqat bitta qoida: <b>SMS kodlarni hech kimga, botga ham yubormang.</b>\n\nYoki raqamni yozing: <code>90 123 45 67</code>', { reply_markup: { keyboard: [[{ text: '📞 Raqamni yuborish', request_contact: true }], [{ text: B.cancel }]], resize_keyboard: true } });
   }
   if (st === 'd_phone') {
     const ph = normPhone(m.contact ? m.contact.phone_number : t);
@@ -340,10 +347,15 @@ async function onMessage(m) {
     if (m.location) { d.lat = m.location.latitude; d.lng = m.location.longitude; d.addr = (t && t !== B.cancel ? t : 'Lokatsiya'); }
     else if (t.length >= 3) { d.addr = t.slice(0, 200); }
     else return send(chat, 'Lokatsiya yuboring yoki manzilni yozing.');
-    const u = (await db.q('select phone from ln_users where tg_id=$1', [chat])).rows[0];
-    if (u && u.phone) return placeOrder(chat, nameOf(from), u.phone, d);
-    await setSt(chat, 'p_phone', d);
-    return send(chat, '📞 Telefon raqamingizni yuboring (haydovchi qo‘ng‘iroq qiladi):', { reply_markup: { keyboard: [[{ text: '📞 Raqamni yuborish', request_contact: true }], [{ text: B.cancel }]], resize_keyboard: true } });
+    if (d.k === 'mahalla' && !d.to_text) {
+      await setSt(chat, 'p_dest', d);
+      return send(chat, '🏁 <b>Qayerga borasiz?</b> Haydovchi oldindan bilishi uchun yozing (masalan: <i>Urganch bozori</i>).', { reply_markup: { keyboard: [[{ text: B.skip }], [{ text: B.cancel }]], resize_keyboard: true } });
+    }
+    return afterAddr(chat, from, d);
+  }
+  if (st === 'p_dest') {
+    if (t !== B.skip) { if (t.length < 2) return send(chat, 'Qayerga borishingizni yozing yoki «' + B.skip + '» ni bosing.'); d.to_text = t.slice(0, 80); }
+    return afterAddr(chat, from, d);
   }
   if (st === 'p_phone') {
     const ph = normPhone(m.contact ? m.contact.phone_number : t);
