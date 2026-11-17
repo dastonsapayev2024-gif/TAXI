@@ -61,6 +61,36 @@ const HEAD = {
   tm: '🏁 <b>Qayerga borasiz?</b>', fm: '📍 <b>Qayerdan minasiz?</b>', pt: '🏁 <b>Qayerga borasiz?</b>', pf: '📍 <b>Qayerdan minasiz?</b>',
   dm: '🚕 <b>Qaysi mahallada ishlaysiz?</b>', dv: '🚕 <b>Qaysi tumandan ishlaysiz?</b>'
 };
+
+// ---------- admin o'zgartira oladigan matnlar ----------
+const TX = {};
+const TXD = [
+  ['b.taxi', 'Tugma: yo‘lovchi — taksi chaqirish', B.taxi], ['b.drv', 'Tugma: haydovchi bo‘lish', B.drv],
+  ['b.on', 'Tugma: liniyaga chiqish', B.on], ['b.off', 'Tugma: liniyadan chiqish', B.off],
+  ['b.pay', 'Tugma: to‘lov', B.pay], ['b.me', 'Tugma: holatim', B.me], ['b.line', 'Tugma: liniyani o‘zgartirish', B.line],
+  ['b.adm', 'Tugma: admin', B.adm], ['b.cancel', 'Tugma: bekor', B.cancel], ['b.menu', 'Tugma: menyu', B.menu],
+  ['h.tm', '1-oyna sarlavhasi (mahalla taksisi)', '🏁 Qayerga borasiz?'], ['h.fm', '2-oyna sarlavhasi (mahalla taksisi)', '📍 Qayerdan minasiz?'],
+  ['h.pt', '1-oyna sarlavhasi (viloyat taksisi)', '🏁 Qayerga borasiz?'], ['h.pf', '2-oyna sarlavhasi (viloyat taksisi)', '📍 Qayerdan minasiz?'],
+  ['h.dm', 'Haydovchi: mahalla tanlash sarlavhasi', '🚕 Qaysi mahallada ishlaysiz?'], ['h.dv', 'Haydovchi: tuman tanlash sarlavhasi', '🚕 Qaysi tumandan ishlaysiz?'],
+  ['hint_root', 'Izoh: viloyat tanlash', 'Viloyatni tanlang:'], ['hint_tuman', 'Izoh: tuman tanlash', 'Tumanni tanlang:'],
+  ['hint_mahalla', 'Izoh: mahalla tanlash ({n} = tuman nomi)', 'Mahallani tanlang yoki «Butun {n}» ni bosing:'],
+  ['whole', 'Tugma: butun tuman ({n} = tuman nomi)', '✅ Butun {n}'], ['back', 'Tugma: orqaga', '⬅️ Orqaga'],
+  ['l_from', 'Haydovchiga: qayerdan', '📍 Qayerdan minadi'], ['l_to', 'Haydovchiga: qayerga', '🏁 Qayerga boradi']
+];
+for (const [k, , def] of TXD) if (!/^[bh]\./.test(k)) TX[k] = def;
+let TXOV = {}, txAt = 0;
+async function loadTx(force) {
+  if (!force && Date.now() - txAt < 15000) return;
+  const r = await db.q("select key,val from settings where key like 'tx:%'");
+  const o = {}; for (const x of r.rows) o[x.key.slice(3)] = x.val;
+  for (const [k, , def] of TXD) {
+    const v = o[k] != null ? o[k] : def, i = k.indexOf('.');
+    if (i > 0 && k[0] === 'b') B[k.slice(2)] = v;
+    else if (i > 0 && k[0] === 'h') HEAD[k.slice(2)] = '<b>' + esc(v) + '</b>';
+    else TX[k] = v;
+  }
+  TXOV = o; txAt = Date.now();
+}
 async function regScreen(mode, nodeId) {
   // mahalla taksisi: faqat ishlaydigan hududlar; bitta viloyat bo'lsa to'g'ri o'shandan boshlanadi
   const local = mode === 'tm' || mode === 'fm' || mode === 'dm';
@@ -78,12 +108,12 @@ async function regScreen(mode, nodeId) {
     const deep = k.kind === 'viloyat' || (!TUMAN_ONLY(mode) && k.kind === 'tuman' && (await kids(k.id)).length > 0);
     rows.push([{ text: k.name + (deep ? ' ›' : ''), callback_data: (deep ? 'rg:' : 'rs:') + mode + ':' + k.id }]);
   }
-  if (node && node.kind === 'tuman' && !TUMAN_ONLY(mode)) rows.push([{ text: '✅ Butun ' + node.name, callback_data: 'rs:' + mode + ':' + node.id }]);
-  if (node && !(solo && node.kind === 'viloyat')) rows.push([{ text: '⬅️ Orqaga', callback_data: 'rg:' + mode + ':' + (node.parent_id || 0) }]);
+  if (node && node.kind === 'tuman' && !TUMAN_ONLY(mode)) rows.push([{ text: TX.whole.replace('{n}', node.name), callback_data: 'rs:' + mode + ':' + node.id }]);
+  if (node && !(solo && node.kind === 'viloyat')) rows.push([{ text: TX.back, callback_data: 'rg:' + mode + ':' + (node.parent_id || 0) }]);
   let hint;
-  if (!node) hint = 'Viloyatni tanlang:';
-  else if (node.kind === 'viloyat' || TUMAN_ONLY(mode)) hint = 'Tumanni tanlang:';
-  else hint = 'Mahallani tanlang yoki «Butun ' + esc(node.name) + '» ni bosing:';
+  if (!node) hint = esc(TX.hint_root);
+  else if (node.kind === 'viloyat' || TUMAN_ONLY(mode)) hint = esc(TX.hint_tuman);
+  else hint = esc(TX.hint_mahalla).replace('{n}', esc(node.name));
   const text = HEAD[mode] + (node && !(solo && node.kind === 'viloyat' && local) ? '\n📍 ' + esc(await pathName(node.id)) : '') + '\n\n' + hint + (list.some(k => !k.active) ? '\n<i>🕓 — tez kunda ishga tushadi</i>' : '');
   return { text: list.length ? text : HEAD[mode] + '\n\nBu yerda hududlar hali qo‘shilmagan. Tez kunda ishga tushadi.', kb: { inline_keyboard: rows } };
 }
@@ -124,7 +154,7 @@ async function eligible(kind, rid, except) {
 async function placeOrder(uid, pname, phone, data) {
   const ids = await eligible(data.k, data.rid, uid);
   if (!ids.length) { await clrSt(uid); return home(uid, '😔 Hozir bu hududda liniyada haydovchi yo‘q. Birozdan keyin qayta urinib ko‘ring.'); }
-  const id = newId(), where = '📍 Qayerdan minadi: <b>' + esc(await pathName(data.rid)) + '</b>\n🏁 Qayerga boradi: <b>' + esc(data.to_text || '—') + '</b>';
+  const id = newId(), where = esc(TX.l_from) + ': <b>' + esc(await pathName(data.rid)) + '</b>\n' + esc(TX.l_to) + ': <b>' + esc(data.to_text || '—') + '</b>';
   await db.q('insert into ln_orders(id,uid,pname,phone,kind,region_id,to_text,addr,lat,lng) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
     [id, uid, pname, phone, data.k, data.rid, data.to_text || '', data.addr || '', data.lat == null ? null : data.lat, data.lng == null ? null : data.lng]);
   const text = '🚕 <b>Yangi buyurtma</b> #' + id + '\n📍 ' + where + '\n📌 Manzil: ' + esc(data.addr || 'Lokatsiya') + '\n👤 ' + esc(pname);
@@ -217,7 +247,7 @@ async function accept(q) {
     return answer(q, x && x.status === 'cancelled' ? 'Yo‘lovchi bekor qildi' : 'Boshqa haydovchi oldi', true);
   }
   await answer(q, 'Buyurtma sizniki ✅');
-  const where = '📍 Qayerdan minadi: ' + esc(await pathName(o.region_id)) + '\n🏁 Qayerga boradi: ' + esc(o.to_text || '—');
+  const where = esc(TX.l_from) + ': ' + esc(await pathName(o.region_id)) + '\n' + esc(TX.l_to) + ': ' + esc(o.to_text || '—');
   const kb = [[{ text: '🏁 Tugadi', callback_data: 'ld:' + id }, { text: '❌ Bekor', callback_data: 'lc:' + id }]];
   if (o.lat != null) kb.unshift([{ text: '🗺 Xaritada ko‘rish', url: mapLink(o.lat, o.lng) }]);
   await edit(chat, mid, '✅ <b>Siz oldingiz</b> #' + id + '\n\n👤 ' + esc(o.pname) + '\n📞 <b>' + esc(showPhone(o.phone)) + '</b>\n📍 ' + where + '\n📌 ' + esc(o.addr || 'Lokatsiya') + '\n\nYo‘lovchi bilan bog‘lanib, borib oling. Narxni o‘zaro kelishasiz.', { reply_markup: { inline_keyboard: kb } });
@@ -251,7 +281,7 @@ const ADM_KB = { inline_keyboard: [
   [{ text: '💳 To‘lovlar', callback_data: 'am:pay' }, { text: '👥 Haydovchilar', callback_data: 'am:drv:0' }],
   [{ text: '🟢 Liniyadagilar', callback_data: 'am:lines' }, { text: '📊 Statistika', callback_data: 'am:st' }],
   [{ text: '✉️ Xabar yuborish', callback_data: 'am:bc' }, { text: '⚙️ Sozlamalar', callback_data: 'am:set' }],
-  [{ text: '🗺 Hududlar', callback_data: 'am:reg' }]] };
+  [{ text: '🗺 Hududlar', callback_data: 'am:reg' }, { text: '✏️ Matnlar', callback_data: 'am:tx' }]] };
 async function regTree(pid, lvl) {
   let out = '';
   for (const k of await kids(pid || null)) {
@@ -313,8 +343,13 @@ async function adminMenu(chat, what, arg) {
     return send(chat, '⚙️ <b>Sozlamalar</b>\nMahalla taksisi: <b>' + fmt(await priceOf('mahalla')) + '</b> so‘m/oy\nViloyat taksisi: <b>' + fmt(await priceOf('viloyat')) + '</b> so‘m/oy\nMuddat: ' + (await payDays()) + ' kun\nKarta: <code>' + esc(await setting('card', '— kiritilmagan —')) + '</code>\n\n' +
       '<b>O‘zgartirish:</b>\n<code>/karta 8600 1234 5678 9012 Ism</code>\n<code>/narx_m 20000</code> — mahalla narxi\n<code>/narx_v 40000</code> — viloyat narxi\n<code>/kun 30</code> — muddat\n<code>/salom Matn</code> — bosh xabar matni\n<code>/yoq ID</code> yoki <code>/yoq ID 15</code> — haydovchini yoqish\n<code>/toxtat ID</code> — to‘xtatish\n<code>/blok ID</code>, <code>/blokdan ID</code> — bloklash\n<code>/xabar ID matn</code> — bitta odamga xabar');
   }
+  if (what === 'tx') {
+    await loadTx(true);
+    const rows = TXD.map((x, i) => [{ text: (TXOV[x[0]] != null ? '✏️ ' : '') + x[1] + ': ' + String(TXOV[x[0]] != null ? TXOV[x[0]] : x[2]).slice(0, 28), callback_data: 'tx:e:' + i }]);
+    return send(chat, '✏️ <b>Matnlar</b>\nO‘zgartirmoqchi bo‘lgan matnni bosing. ✏️ belgisi — o‘zgartirilgan.\n\nO‘zgartirgach foydalanuvchilar tugmalar yangilanishi uchun botga /start yozishi kerak.', { reply_markup: { inline_keyboard: rows } });
+  }
   if (what === 'reg') {
-    return send(chat, '🗺 <b>Hududlar</b>\n\n' + (await regTree(null, 0)) + '\n🕓 — «tez kunda» (odamlar bossa shunday xabar oladi)\n\n<b>Buyruqlar:</b>\n<code>/hudud Xorazm &gt; Shovot</code> — tuman qo‘shish\n<code>/hudud Xorazm &gt; Shovot &gt; Yangi mahalla</code>\n<code>/hudud Buxoro</code> — yangi viloyat\n<code>/hudud_on Buxoro</code> — ishga tushirish\n<code>/hudud_off Buxoro</code> — «tez kunda» holatiga qaytarish');
+    return send(chat, '🗺 <b>Hududlar</b>\n\n' + (await regTree(null, 0)) + '\n🕓 — «tez kunda» (odamlar bossa shunday xabar oladi)\n\n<b>Buyruqlar:</b>\n<code>/hudud Xorazm &gt; Shovot</code> — tuman qo‘shish\n<code>/hudud Xorazm &gt; Shovot &gt; Yangi mahalla</code>\n<code>/hudud Buxoro</code> — yangi viloyat\n<code>/nom Eski nom &gt; Yangi nom</code> — nomini o‘zgartirish\n<code>/hudud_on Buxoro</code> — ishga tushirish\n<code>/hudud_off Buxoro</code> — «tez kunda» holatiga qaytarish');
   }
 }
 async function sendCheque(admChat, p, name, phone, kind) {
@@ -387,6 +422,13 @@ async function adminCmd(chat, t) {
     const r = await send(m[1], '📩 <b>Admin xabari:</b>\n\n' + plain(m[2]));
     return send(chat, r && r.ok ? '✅ Yuborildi' : '❌ Yuborilmadi (odam botni to‘xtatgan bo‘lishi mumkin)');
   }
+  if ((m = t.match(/^\/nom\s+(.+?)\s*>\s*(.+)$/))) {
+    const nq = z => z.replace(/[’ʻ'`´]/g, '‘').trim().toLowerCase();
+    const all = (await db.q('select id,name from ln_regions')).rows.filter(r => nq(r.name) === nq(m[1]));
+    if (all.length !== 1) return send(chat, all.length ? '❌ Bu nom bir nechta joyda bor' : '❌ Topilmadi: ' + esc(m[1]));
+    try { await db.q('update ln_regions set name=$2 where id=$1', [all[0].id, m[2].trim().slice(0, 60)]); } catch (e) { return send(chat, '❌ Bunday nom bu joyda allaqachon bor'); }
+    return send(chat, '✅ Nom o‘zgardi: <b>' + esc(m[2].trim()) + '</b>');
+  }
   if ((m = t.match(/^\/hudud_(on|off)\s+(.+)$/))) {
     const nm = m[2].trim().slice(0, 60);
     const r = await db.q('update ln_regions set active=$2 where lower(name)=lower($1) returning id', [nm, m[1] === 'on']);
@@ -432,6 +474,12 @@ async function onMessage(m) {
   if (t === B.adm && admin) return send(chat, '🛠 <b>Admin paneli</b>', { reply_markup: ADM_KB });
 
   const { st, d } = await getSt(chat);
+  if (admin && st === 'a_tx') {
+    const x = TXD[d.i]; await clrSt(chat);
+    if (!x || t.length < 1) return send(chat, 'Bekor qilindi.');
+    await setSetting('tx:' + x[0], t.slice(0, 120)); await loadTx(true);
+    return send(chat, '✅ Saqlandi: <b>' + esc(t.slice(0, 120)) + '</b>\n\nBoshqa matn: Admin → ✏️ Matnlar', { reply_markup: await menuKb(chat) });
+  }
   if (admin && st === 'a_bc') {
     if (t.length < 2) return send(chat, 'Xabar matnini yozing.');
     d.text = t; await setSt(chat, 'a_bc2', d);
@@ -550,6 +598,14 @@ async function onCallback(q) {
   if (k === 'lc') return finish(q, 'cancel');
   if (k === 'pc') return passengerCancel(q);
   if (k === 'pa') return payDecide(q);
+  if (k === 'tx') {
+    if (!admin) return answer(q, 'Faqat admin', true);
+    await answer(q); await loadTx(true);
+    const x = TXD[Number(d[2])]; if (!x) return;
+    if (d[1] === 'r') { await db.q('delete from settings where key=$1', ['tx:' + x[0]]); await loadTx(true); return send(chat, '↩️ Asl holiga qaytdi: <b>' + esc(x[2]) + '</b>'); }
+    await setSt(chat, 'a_tx', { i: Number(d[2]) });
+    return send(chat, '✏️ <b>' + esc(x[1]) + '</b>\nHozirgi: <b>' + esc(TXOV[x[0]] != null ? TXOV[x[0]] : x[2]) + '</b>\n\nYangi matnni yozing (emoji ham mumkin):', { reply_markup: { inline_keyboard: [[{ text: '↩️ Asl holiga qaytarish', callback_data: 'tx:r:' + d[2] }]] } });
+  }
   if (k === 'am' || k === 'bc' || k === 'bk' || k === 'dc') {
     if (!admin) return answer(q, 'Faqat admin', true);
     await answer(q);
@@ -583,7 +639,7 @@ async function ensureMenu(force) {
     if (r && r.ok) await setSetting('menu_off', '2'); else menuDone = false;
   } catch (e) { menuDone = false; }
 }
-const CB = new Set(['pk', 'kd', 'rg', 'rs', 'pw', 'la', 'ld', 'lc', 'pc', 'pa', 'am', 'ia', 'on', 'ch', 'bc', 'bk', 'dc']);
+const CB = new Set(['tx', 'pk', 'kd', 'rg', 'rs', 'pw', 'la', 'ld', 'lc', 'pc', 'pa', 'am', 'ia', 'on', 'ch', 'bc', 'bk', 'dc']);
 const menuChats = new Set();
 async function chatMenu(chat) {
   if (!chat || menuChats.has(chat)) return;
@@ -591,6 +647,11 @@ async function chatMenu(chat) {
   try { await tg('setChatMenuButton', { chat_id: chat, menu_button: { type: 'commands' } }); } catch (e) { menuChats.delete(chat); }
 }
 async function handle(up) {
+  await loadTx();
+  if (up.message && typeof up.message.text === 'string') {
+    const t0 = up.message.text;
+    for (const [k, , def] of TXD) if (k[0] === 'b' && k[1] === '.' && t0 === def && B[k.slice(2)] !== def) { up.message.text = B[k.slice(2)]; break; }
+  }
   await ensureMenu();
   { const c = (up.message && up.message.chat && up.message.chat.id) || (up.callback_query && up.callback_query.message && up.callback_query.message.chat.id); if (c) await chatMenu(c); }
   if (up.callback_query && up.callback_query.data && up.callback_query.message) {
