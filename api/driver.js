@@ -4,6 +4,8 @@ const db = require('./_db');
 const OK_ID = /^[A-Za-z0-9]{4,12}$/;
 const cleanName = v => { const n = String(v || '').replace(/[<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 40); return n.split(' ').filter(w => w.length > 1).length >= 2 ? n : ''; };
 const phoneOf = v => { let d = String(v || '').replace(/\D/g, ''); if (d.length === 9) d = '998' + d; return /^998\d{9}$/.test(d) ? d : ''; };
+const ON_HOURS = 3;
+const isOn = d => !!(d && d.online && d.seen && Date.now() - new Date(d.seen).getTime() < ON_HOURS * 3600 * 1000);
 const nameOf = u => [u.first_name, u.last_name].filter(Boolean).join(' ').slice(0, 40) || 'Haydovchi';
 
 // Haydovchi ilovasi uchun yagona nuqta (Telegram initData bilan tekshiriladi)
@@ -22,7 +24,7 @@ module.exports = async (req, res) => {
       const d = await drv();
       if (!d || !d.car || !d.phone) return res.status(200).json({ ok: true, registered: false, name: (d && d.phone ? d.name : '') || nameOf(u), phone: d ? d.phone : '', car: d ? d.car : '', cfg });
       const a = (await db.q("select id, price, fee_paid, km, phone, name, fromp, top, floor(extract(epoch from (now() - taken_at)))::int tage from orders where driver_id=$1 and status='taken' order by taken_at desc limit 1", [me])).rows[0] || null;
-      return res.status(200).json({ ok: true, registered: true, blocked: d.blocked, name: d.name, car: d.car, balance: d.balance, free: d.free_left, cfg,
+      return res.status(200).json({ ok: true, registered: true, blocked: d.blocked, name: d.name, car: d.car, balance: d.balance, free: d.free_left, cfg, online: isOn(d),
         active: a ? { id: a.id, price: a.price, fee: a.fee_paid, km: a.km, phone: a.phone, pname: a.name, from: a.fromp, to: a.top, canCancel: a.tage < CFG.cancelMin * 60 } : null });
     }
     if (b.action === 'register') {
@@ -41,7 +43,13 @@ module.exports = async (req, res) => {
     if (!d.phone || !d.car) return res.status(403).json({ error: 'Avval ro‘yxatdan o‘ting' });
     if (d.blocked) return res.status(403).json({ error: 'Hisobingiz bloklangan. Admin bilan bog‘laning.' });
 
+    if (b.action === 'online') {
+      const on = b.on === true;
+      await db.q('update drivers set online=$1, seen=now() where tg_id=$2', [on, me]);
+      return res.status(200).json({ ok: true, online: on });
+    }
     if (b.action === 'orders') {
+      db.q("update drivers set seen=now() where tg_id=$1 and online=true and (seen is null or seen < now() - interval '60 seconds')", [me]).catch(() => {});
       const r = await db.q("select id, price, fee, km, fromp, top, name, floor(extract(epoch from (now() - created)))::int age from orders where status='new' and created > now() - make_interval(mins => $1) order by created desc limit 30", [CFG.expireMin]);
       const free = d.free_left > 0;
       return res.status(200).json({ ok: true, orders: r.rows.map(o => ({ id: o.id, price: o.price, fee: free ? 0 : o.fee, km: o.km, from: o.fromp, to: o.top, pname: o.name, age: o.age })), balance: d.balance, free: d.free_left });
@@ -85,6 +93,7 @@ module.exports = async (req, res) => {
     if (b.action === 'done') {
       const r = await db.fn('done_order', id, me);
       if (r.err) return res.status(409).json({ error: 'Bu buyurtma sizniki emas yoki allaqachon tugagan' });
+      db.q('update drivers set seen=now() where tg_id=$1', [me]).catch(() => {});
       return res.status(200).json({ ok: true });
     }
     return res.status(400).json({ error: 'noto‘g‘ri so‘rov' });

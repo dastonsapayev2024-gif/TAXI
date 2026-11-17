@@ -76,7 +76,7 @@ module.exports = async (req, res) => {
     // 2) ro'yxatdan o'tgan haydovchilarga shaxsiy xabar (ilovani ochish tugmasi bilan)
     try {
       const base = baseUrl(req);
-      const ds = (await db.q("select tg_id from drivers where blocked=false and car<>'' order by created desc limit 80")).rows;
+      const ds = (await db.q("select tg_id from drivers d where blocked=false and car<>'' and phone<>'' and online=true and seen > now() - interval '3 hours' and tg_id<>$1 and not exists (select 1 from orders o where o.driver_id=d.tg_id and o.status='taken') order by seen desc limit 80", [uid || 0])).rows;
       if (base && ds.length) {
         const dm = '🚕 <b>Yangi buyurtma</b> #' + id + '\n📍 ' + esc(from.addr || '—') + '\n🏁 ' + esc(to.addr || '—') + '\n📏 ~' + km + ' km · 💰 ' + fmt(price) + ' so‘m (sizga ' + fmt(price - fee) + ')';
         await Promise.allSettled(ds.map(d => tg('sendMessage', { chat_id: Number(d.tg_id), text: dm, parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '🚕 Ochish va qabul qilish', web_app: { url: base + '/drv.html' } }]] } })));
