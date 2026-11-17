@@ -49,6 +49,8 @@ async function kids(pid) {
   const r = pid ? await db.q('select id,name,kind,parent_id,active from ln_regions where parent_id=$1 order by id', [pid]) : await db.q('select id,name,kind,parent_id,active from ln_regions where parent_id is null order by id');
   return r.rows;
 }
+const rname = async id => { if (!id) return '—'; const r = (await db.q('select name from ln_regions where id=$1', [id])).rows[0]; return r ? r.name : '—'; };
+const routeOf = async (f, t) => esc(await rname(f)) + ' → ' + esc(await rname(t));
 const reg = async id => (await db.q('select id,name,kind,parent_id,active from ln_regions where id=$1', [id])).rows[0] || null;
 async function pathName(id) {
   const parts = []; let cur = await reg(id), n = 0;
@@ -56,10 +58,10 @@ async function pathName(id) {
   return parts.join(' › ');
 }
 // mode: tm/fm (mahalla taksi: qayerga/qayerdan), pt/pf (viloyat taksi: qayerga/qayerdan), dm/dv (haydovchi: mahalla/viloyat)
-const TUMAN_ONLY = m => m === 'pf' || m === 'pt' || m === 'dv';
+const TUMAN_ONLY = m => m === 'pf' || m === 'pt' || m === 'dv' || m === 'dw';
 const HEAD = {
   tm: '🏁 <b>Qayerga borasiz?</b>', fm: '📍 <b>Qayerdan minasiz?</b>', pt: '🏁 <b>Qayerga borasiz?</b>', pf: '📍 <b>Qayerdan minasiz?</b>',
-  dm: '🚕 <b>Qaysi mahallada ishlaysiz?</b>', dv: '🚕 <b>Qaysi tumandan ishlaysiz?</b>'
+  dm: '', dv: '', dt: '', dw: ''
 };
 
 // ---------- admin o'zgartira oladigan matnlar ----------
@@ -71,7 +73,7 @@ const TXD = [
   ['b.adm', 'Tugma: admin', B.adm], ['b.cancel', 'Tugma: bekor', B.cancel], ['b.menu', 'Tugma: menyu', B.menu],
   ['h.tm', '1-oyna sarlavhasi (mahalla taksisi)', '🏁 Qayerga borasiz?'], ['h.fm', '2-oyna sarlavhasi (mahalla taksisi)', '📍 Qayerdan minasiz?'],
   ['h.pt', '1-oyna sarlavhasi (viloyat taksisi)', '🏁 Qayerga borasiz?'], ['h.pf', '2-oyna sarlavhasi (viloyat taksisi)', '📍 Qayerdan minasiz?'],
-  ['h.dm', 'Haydovchi: mahalla tanlash sarlavhasi', '🚕 Qaysi mahallada ishlaysiz?'], ['h.dv', 'Haydovchi: tuman tanlash sarlavhasi', '🚕 Qaysi tumandan ishlaysiz?'],
+  ['h.dm', 'Haydovchi (mahalla): qayerdan', '🚕 Liniyangiz: qayerdan qatnaysiz?'], ['h.dv', 'Haydovchi (viloyat): qayerdan', '🚕 Liniyangiz: qayerdan qatnaysiz?'], ['h.dt', 'Haydovchi (mahalla): qayerga', '🏁 Qayerga qatnaysiz?'], ['h.dw', 'Haydovchi (viloyat): qayerga', '🏁 Qayerga qatnaysiz?'],
   ['hint_flat', 'Izoh: mahalla taksisi ro‘yxati', 'Joyni tanlang:'], ['hint_root', 'Izoh: viloyat tanlash', 'Viloyatni tanlang:'], ['hint_tuman', 'Izoh: tuman tanlash', 'Tumanni tanlang:'],
   ['hint_mahalla', 'Izoh: mahalla tanlash ({n} = tuman nomi)', 'Mahallani tanlang yoki «Butun {n}» ni bosing:'],
   ['whole', 'Tugma: butun tuman ({n} = tuman nomi)', '✅ Butun {n}'], ['back', 'Tugma: orqaga', '⬅️ Orqaga'],
@@ -93,7 +95,7 @@ async function loadTx(force) {
 }
 async function regScreen(mode, nodeId) {
   // mahalla taksisi va mahalla haydovchisi: bitta tekis ro'yxat (oyna ichida oyna yo'q)
-  if (mode === 'tm' || mode === 'fm' || mode === 'dm') {
+  if (mode === 'tm' || mode === 'fm' || mode === 'dm' || mode === 'dt') {
     const tum = [], mah = [];
     for (const v of (await kids(null)).filter(k => k.active)) {
       for (const t of (await kids(v.id)).filter(k => k.active)) {
@@ -157,21 +159,21 @@ async function startTaxi(chat) {
 }
 const askAddr = async (chat, text) => send(chat, (text ? text + '\n\n' : '') + '📍 <b>Sizni qayerdan olib ketamiz?</b>\nLokatsiya yuboring (tugma) yoki uy manzilini yozing.', { reply_markup: { keyboard: [[{ text: '📍 Lokatsiya yuborish', request_location: true }], [{ text: B.cancel }]], resize_keyboard: true } });
 
-async function eligible(kind, rid, except) {
+async function eligible(kind, rid, toId, except) {
   const r = await db.q(
     "select d.tg_id from ln_drivers d where d.blocked=false and d.online and d.online_at > now() - interval '" + HOURS_ONLINE + " hours' and d.paid_until > now() and d.kind=$1 " +
-    "and d.region_id in (select id from ln_regions where id=$2 or parent_id=$2 or id=(select parent_id from ln_regions where id=$2)) and d.tg_id<>$3 " +
-    "and not exists (select 1 from ln_orders o where o.driver_id=d.tg_id and o.status='taken') order by d.online_at limit 60", [kind, rid, except || 0]);
+    "and d.region_id=$2 and d.to_id=$3 and d.tg_id<>$4 " +
+    "and not exists (select 1 from ln_orders o where o.driver_id=d.tg_id and o.status='taken') order by d.online_at limit 60", [kind, rid, toId || 0, except || 0]);
   return r.rows.map(x => +x.tg_id);
 }
 
 async function placeOrder(uid, pname, phone, data) {
-  const ids = await eligible(data.k, data.rid, uid);
-  if (!ids.length) { await clrSt(uid); return home(uid, '😔 Hozir bu hududda liniyada haydovchi yo‘q. Birozdan keyin qayta urinib ko‘ring.'); }
-  const id = newId(), where = esc(TX.l_from) + ': <b>' + esc(await pathName(data.rid)) + '</b>\n' + esc(TX.l_to) + ': <b>' + esc(data.to_text || '—') + '</b>';
-  await db.q('insert into ln_orders(id,uid,pname,phone,kind,region_id,to_text,addr,lat,lng) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
-    [id, uid, pname, phone, data.k, data.rid, data.to_text || '', data.addr || '', data.lat == null ? null : data.lat, data.lng == null ? null : data.lng]);
-  const text = '🚕 <b>Yangi buyurtma</b> #' + id + '\n📍 ' + where + '\n📌 Manzil: ' + esc(data.addr || 'Lokatsiya') + '\n👤 ' + esc(pname);
+  const ids = await eligible(data.k, data.rid, data.to_id, uid);
+  if (!ids.length) { await clrSt(uid); return home(uid, '😔 Hozir bu yo‘nalishda liniyada haydovchi yo‘q. Birozdan keyin qayta urinib ko‘ring.'); }
+  const id = newId(), where = esc(TX.l_from) + ': <b>' + esc(await rname(data.rid)) + '</b>\n' + esc(TX.l_to) + ': <b>' + esc(await rname(data.to_id)) + '</b>';
+  await db.q('insert into ln_orders(id,uid,pname,phone,kind,region_id,to_text,addr,lat,lng,to_id,people,uname) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)',
+    [id, uid, pname, phone, data.k, data.rid, data.to_text || '', data.addr || '', data.lat == null ? null : data.lat, data.lng == null ? null : data.lng, data.to_id || null, data.people || 1, data.uname || '']);
+  const text = '🚕 <b>Yangi buyurtma</b> #' + id + '\n📍 ' + where + '\n📌 Manzil: ' + esc(data.addr || 'Lokatsiya') + '\n👥 Necha kishi: <b>' + (data.people || 1) + '</b>\n👤 ' + esc(pname);
   const kb = [[{ text: '✅ Qabul qilaman', callback_data: 'la:' + id }]];
   if (data.lat != null) kb.push([{ text: '🗺 Xaritada ko‘rish', url: mapLink(data.lat, data.lng) }]);
   let sent = 0;
@@ -187,6 +189,11 @@ async function placeOrder(uid, pname, phone, data) {
     { reply_markup: { inline_keyboard: [[{ text: '❌ Buyurtmani bekor qilish', callback_data: 'pc:' + id }]] } }).then(() => home(uid, 'Kuting… ⏳'));
 }
 async function afterAddr(chat, from, d) {
+  d.uid = chat; d.uname = from.username || '';
+  await setSt(chat, 'p_ppl', d);
+  return send(chat, '👥 <b>Necha kishi borasiz?</b>\nPastdagi raqamlardan birini bosing.', { reply_markup: { keyboard: [[{ text: '1' }, { text: '2' }, { text: '3' }, { text: '4' }], [{ text: '5' }, { text: '6' }, { text: '7' }, { text: '8' }], [{ text: B.cancel }]], resize_keyboard: true } });
+}
+async function afterPeople(chat, from, d) {
   const u = (await db.q('select phone from ln_users where tg_id=$1', [chat])).rows[0];
   if (u && u.phone) return placeOrder(chat, nameOf(from), u.phone, d);
   await setSt(chat, 'p_phone', d);
@@ -203,9 +210,9 @@ async function startDriver(chat) {
 async function showMe(chat) {
   const d = await getDriver(chat);
   if (!d) return home(chat, 'Siz haydovchi emassiz. «' + B.drv + '» ni bosing.');
-  const pr = await priceOf(d.kind), rn = d.region_id ? await pathName(d.region_id) : '—';
+  const pr = await priceOf(d.kind), rn = d.region_id && d.to_id ? await routeOf(d.region_id, d.to_id) : '—';
   const st = isPaid(d) ? '✅ Amal qiladi: <b>' + fdate(d.paid_until) + '</b> gacha (' + daysLeft(d.paid_until) + ' kun)' : '⚠️ To‘lov yo‘q yoki muddati tugagan';
-  return home(chat, '🚕 <b>' + esc(d.name) + '</b>\n📞 ' + esc(showPhone(d.phone)) + '\n🚗 ' + esc(d.car) + '\n🏷 ' + (d.kind === 'viloyat' ? 'Viloyat taksisi' : 'Mahalla taksisi') + '\n📍 Liniyangiz: <b>' + esc(rn) +
+  return home(chat, '🚕 <b>' + esc(d.name) + '</b>\n📞 ' + esc(showPhone(d.phone)) + '\n🚗 ' + esc(d.car) + '\n🏷 ' + (d.kind === 'viloyat' ? 'Viloyat taksisi' : 'Mahalla taksisi') + '\n📍 Liniyangiz: <b>' + rn +
     '</b>\n💰 Oylik to‘lov: ' + fmt(pr) + ' so‘m\n' + st + '\n' + (d.online && isPaid(d) ? '🟢 Liniyadasiz' : '🔴 Liniyada emassiz'));
 }
 async function goOnline(chat, on) {
@@ -214,9 +221,9 @@ async function goOnline(chat, on) {
   if (d.blocked) return home(chat, '⛔ Hisobingiz bloklangan. Admin bilan bog‘laning.');
   if (on) {
     if (!isPaid(d)) return home(chat, '⚠️ Liniyaga chiqish uchun oylik to‘lov kerak. «' + B.pay + '» ni bosing.');
-    if (!d.region_id) return startChange(chat);
+    if (!d.region_id || !d.to_id) return startChange(chat);
     await db.q('update ln_drivers set online=true, online_at=now() where tg_id=$1', [chat]);
-    return home(chat, '🟢 Siz liniyadasiz: <b>' + esc(await pathName(d.region_id)) + '</b>\nBuyurtma kelsa, shu yerga xabar keladi. ' + HOURS_ONLINE + ' soatdan keyin o‘zi chiqadi.\n\nBoshqa joyga o‘tish: «' + B.line + '».');
+    return home(chat, '🟢 Siz liniyadasiz: <b>' + (await routeOf(d.region_id, d.to_id)) + '</b>\nBuyurtma kelsa, shu yerga xabar keladi. ' + HOURS_ONLINE + ' soatdan keyin o‘zi chiqadi.\n\nBoshqa joyga o‘tish: «' + B.line + '».');
   }
   await db.q('update ln_drivers set online=false where tg_id=$1', [chat]);
   return home(chat, '🔴 Liniyadan chiqdingiz.');
@@ -237,9 +244,9 @@ async function startPay(chat) {
   return send(chat, '💳 <b>Oylik to‘lov: ' + fmt(pr) + ' so‘m</b> (' + (await payDays()) + ' kun)\n\nKarta:\n<code>' + esc(card) + '</code>\n\nTo‘lagach <b>chek rasmini (skrinshot)</b> shu yerga yuboring. Admin tasdiqlagach liniyaga chiqa olasiz.',
     { reply_markup: { keyboard: [[{ text: B.cancel }]], resize_keyboard: true } });
 }
-async function finishReg(chat, from, d, rid) {
-  await db.q("insert into ln_drivers(tg_id,name,username,phone,car,kind,region_id) values($1,$2,$3,$4,$5,$6,$7) on conflict (tg_id) do update set name=excluded.name, phone=excluded.phone, car=excluded.car, kind=excluded.kind, region_id=excluded.region_id",
-    [chat, d.name, from.username || '', d.phone, d.car, d.kind, rid]);
+async function finishReg(chat, from, d, rid, toId) {
+  await db.q("insert into ln_drivers(tg_id,name,username,phone,car,kind,region_id,to_id) values($1,$2,$3,$4,$5,$6,$7,$8) on conflict (tg_id) do update set name=excluded.name, phone=excluded.phone, car=excluded.car, kind=excluded.kind, region_id=excluded.region_id, to_id=excluded.to_id",
+    [chat, d.name, from.username || '', d.phone, d.car, d.kind, rid, toId]);
   await clrSt(chat);
   const pr = await priceOf(d.kind);
   return home(chat, '✅ <b>Ro‘yxatdan o‘tdingiz!</b>\n\nKeyingi qadam: oylik to‘lov <b>' + fmt(pr) + ' so‘m</b>. «' + B.pay + '» ni bosing, to‘lab chekni yuboring. Admin tasdiqlagach «' + B.on + '» ishlaydi.\n\nLiniyani istagan payt «' + B.line + '» orqali almashtira olasiz.');
@@ -261,10 +268,11 @@ async function accept(q) {
     return answer(q, x && x.status === 'cancelled' ? 'Yo‘lovchi bekor qildi' : 'Boshqa haydovchi oldi', true);
   }
   await answer(q, 'Buyurtma sizniki ✅');
-  const where = esc(TX.l_from) + ': ' + esc(await pathName(o.region_id)) + '\n' + esc(TX.l_to) + ': ' + esc(o.to_text || '—');
+  const where = esc(TX.l_from) + ': ' + esc(await rname(o.region_id)) + '\n' + esc(TX.l_to) + ': ' + esc(o.to_id ? await rname(o.to_id) : (o.to_text || '—'));
+  const tgl = o.uname ? '@' + esc(o.uname) : '<a href="tg://user?id=' + o.uid + '">Telegramda yozish</a>';
   const kb = [[{ text: '🏁 Tugadi', callback_data: 'ld:' + id }, { text: '❌ Bekor', callback_data: 'lc:' + id }]];
   if (o.lat != null) kb.unshift([{ text: '🗺 Xaritada ko‘rish', url: mapLink(o.lat, o.lng) }]);
-  await edit(chat, mid, '✅ <b>Siz oldingiz</b> #' + id + '\n\n👤 ' + esc(o.pname) + '\n📞 <b>' + esc(showPhone(o.phone)) + '</b>\n📍 ' + where + '\n📌 ' + esc(o.addr || 'Lokatsiya') + '\n\nYo‘lovchi bilan bog‘lanib, borib oling. Narxni o‘zaro kelishasiz.', { reply_markup: { inline_keyboard: kb } });
+  await edit(chat, mid, '✅ <b>Siz oldingiz</b> #' + id + '\n\n👤 ' + esc(o.pname) + '\n📞 <b>' + esc(showPhone(o.phone)) + '</b>\n💬 ' + tgl + '\n👥 Necha kishi: <b>' + (o.people || 1) + '</b>\n📍 ' + where + '\n📌 ' + esc(o.addr || 'Lokatsiya') + '\n\nYo‘lovchi bilan bog‘lanib, borib oling. Narxni o‘zaro kelishasiz.', { reply_markup: { inline_keyboard: kb } });
   if (o.lat != null) await quiet(tg('sendLocation', { chat_id: chat, latitude: o.lat, longitude: o.lng }));
   const others = (await db.q('select chat_id,msg_id from ln_msgs where order_id=$1 and chat_id<>$2', [id, from.id])).rows;
   for (const m of others) await edit(m.chat_id, m.msg_id, '⏱ Buyurtma #' + id + ' boshqa haydovchi tomonidan olindi.');
@@ -309,7 +317,7 @@ async function driverCard(chat, id) {
   if (!d) return send(chat, '❌ Haydovchi topilmadi');
   const n = (await db.q("select count(*) filter (where status='done')::int done, count(*)::int tot from ln_orders where driver_id=$1", [id])).rows[0];
   const text = '🚕 <b>' + esc(d.name) + '</b> · <code>' + d.tg_id + '</code>' + (d.username ? ' · @' + esc(d.username) : '') + '\n📞 ' + esc(showPhone(d.phone)) + '\n🚗 ' + esc(d.car) +
-    '\n🏷 ' + (d.kind === 'viloyat' ? 'Viloyat' : 'Mahalla') + ' taksisi\n📍 ' + (d.region_id ? esc(await pathName(d.region_id)) : '—') +
+    '\n🏷 ' + (d.kind === 'viloyat' ? 'Viloyat' : 'Mahalla') + ' taksisi\n📍 ' + (d.region_id && d.to_id ? await routeOf(d.region_id, d.to_id) : '—') +
     '\n💰 ' + (isPaid(d) ? '✅ ' + fdate(d.paid_until) + ' gacha (' + daysLeft(d.paid_until) + ' kun)' : '❌ to‘lov yo‘q') + '\n' + (d.online ? '🟢 Liniyada' : '🔴 Liniyada emas') + (d.blocked ? '\n⛔ <b>Bloklangan</b>' : '') +
     '\n📦 Buyurtmalar: ' + n.done + ' bajarilgan / ' + n.tot + ' jami\n🗓 Ro‘yxatdan: ' + fdate(d.created);
   return send(chat, text, { reply_markup: { inline_keyboard: [
@@ -334,10 +342,10 @@ async function adminMenu(chat, what, arg) {
       '\n\n/h ID ni bossangiz haydovchi kartasi ochiladi (bloklash, kun qo‘shish, xabar).', kb.length ? { reply_markup: { inline_keyboard: [kb] } } : {});
   }
   if (what === 'lines') {
-    const r = (await db.q("select d.name, d.kind, d.region_id from ln_drivers d where d.online and d.paid_until>now() and d.blocked=false and d.online_at>now()-interval '" + HOURS_ONLINE + " hours' order by d.region_id")).rows;
+    const r = (await db.q("select d.name, d.kind, d.region_id, d.to_id from ln_drivers d where d.online and d.paid_until>now() and d.blocked=false and d.online_at>now()-interval '" + HOURS_ONLINE + " hours' order by d.region_id")).rows;
     if (!r.length) return send(chat, '🔴 Hozir liniyada hech kim yo‘q.');
     const g = {};
-    for (const d of r) { const k = (d.region_id ? await pathName(d.region_id) : '—') + ' (' + (d.kind === 'viloyat' ? 'viloyat' : 'mahalla') + ')'; (g[k] = g[k] || []).push(d.name); }
+    for (const d of r) { const k = (d.region_id && d.to_id ? (await rname(d.region_id)) + ' → ' + (await rname(d.to_id)) : '—') + ' (' + (d.kind === 'viloyat' ? 'viloyat' : 'mahalla') + ')'; (g[k] = g[k] || []).push(d.name); }
     return send(chat, '🟢 <b>Liniyada: ' + r.length + ' ta</b>\n\n' + Object.keys(g).map(k => '📍 <b>' + esc(k) + '</b> — ' + g[k].length + ' ta\n   ' + g[k].map(esc).join(', ')).join('\n\n'));
   }
   if (what === 'st') {
@@ -373,7 +381,7 @@ async function sendCheque(admChat, p, name, phone, kind) {
   return tg(isDoc ? 'sendDocument' : 'sendPhoto', isDoc ? { chat_id: admChat, document: fid, caption: cap, parse_mode: 'HTML', reply_markup: kb } : { chat_id: admChat, photo: fid, caption: cap, parse_mode: 'HTML', reply_markup: kb });
 }
 async function activate(id, days) {
-  const r = await db.q("update ln_drivers set paid_until = greatest(now(), coalesce(paid_until, now())) + ($2 || ' days')::interval where tg_id=$1 returning paid_until, kind, region_id", [id, String(days)]);
+  const r = await db.q("update ln_drivers set paid_until = greatest(now(), coalesce(paid_until, now())) + ($2 || ' days')::interval where tg_id=$1 returning paid_until, kind, region_id, to_id", [id, String(days)]);
   return r.rows[0] || null;
 }
 async function payDecide(q) {
@@ -388,7 +396,7 @@ async function payDecide(q) {
   const dr = await getDriver(p.driver_id), amount = await priceOf(dr ? dr.kind : 'mahalla');
   await db.q('update ln_pay set amount=$2 where id=$1', [pid, amount]);
   const u = await activate(p.driver_id, await payDays());
-  if (u) await quiet(send(p.driver_id, '✅ <b>To‘lov tasdiqlandi!</b>\nAmal qilish muddati: <b>' + fdate(u.paid_until) + '</b> gacha.\n\n📍 Liniyangiz: <b>' + esc(u.region_id ? await pathName(u.region_id) : '—') + '</b>\nTo‘g‘ri bo‘lsa «' + B.on + '» ni bosing. Boshqa joy kerak bo‘lsa, avval liniyani o‘zgartiring.',
+  if (u) await quiet(send(p.driver_id, '✅ <b>To‘lov tasdiqlandi!</b>\nAmal qilish muddati: <b>' + fdate(u.paid_until) + '</b> gacha.\n\n📍 Liniyangiz: <b>' + (u.region_id && u.to_id ? await routeOf(u.region_id, u.to_id) : '—') + '</b>\nTo‘g‘ri bo‘lsa «' + B.on + '» ni bosing. Boshqa joy kerak bo‘lsa, avval liniyani o‘zgartiring.',
     { reply_markup: { inline_keyboard: [[{ text: '🟢 Liniyaga chiqish', callback_data: 'on:0' }], [{ text: '📍 Liniyani o‘zgartirish', callback_data: 'ch:0' }]] } }).then(async () => send(p.driver_id, 'Menyu 👇', { reply_markup: await menuKb(p.driver_id) })));
 }
 async function blockUser(id, on) {
@@ -524,6 +532,11 @@ async function onMessage(m) {
       [{ text: '🏘 Mahalla taksisi · ' + fmt(await priceOf('mahalla')) + ' so‘m/oy', callback_data: 'kd:m' }],
       [{ text: '🛣 Viloyat taksisi · ' + fmt(await priceOf('viloyat')) + ' so‘m/oy', callback_data: 'kd:v' }]] } });
   }
+  if (st === 'p_ppl') {
+    const n = parseInt(t, 10);
+    if (!(n >= 1 && n <= 8)) return send(chat, 'Necha kishi ekanini raqam bilan bosing: 1 dan 8 gacha.');
+    d.people = n; return afterPeople(chat, from, d);
+  }
   if (st === 'p_addr') {
     if (m.location) { d.lat = m.location.latitude; d.lng = m.location.longitude; d.addr = (t && t !== B.cancel ? t : 'Lokatsiya'); }
     else if (t.length >= 3) { d.addr = t.slice(0, 200); }
@@ -586,7 +599,7 @@ async function onCallback(q) {
     await answer(q);
     const { st, d: sd } = await getSt(chat);
     if (mode === 'tm' || mode === 'pt') {
-      sd.to_text = await pathName(rid); await setSt(chat, 'p_reg', sd);
+      sd.to_id = rid; sd.to_text = await pathName(rid); await setSt(chat, 'p_reg', sd);
       const sc = await regScreen(mode === 'tm' ? 'fm' : 'pf', 0);
       return edit(chat, mid, '✅ Qayerga: <b>' + esc(sd.to_text) + '</b>\n\n' + sc.text, { reply_markup: sc.kb });
     }
@@ -596,12 +609,18 @@ async function onCallback(q) {
       return askAddr(chat, '');
     }
     if (mode === 'dm' || mode === 'dv') {
-      await edit(chat, mid, '✅ Liniya: <b>' + esc(await pathName(rid)) + '</b>');
-      if (st === 'd_reg') return finishReg(chat, from, sd, rid);
+      sd.from_id = rid; await setSt(chat, st === 'd_reg' ? 'd_reg2' : 'd_chg2', sd);
+      const sc = await regScreen(mode === 'dm' ? 'dt' : 'dw', 0);
+      return edit(chat, mid, '✅ Qayerdan: <b>' + esc(await rname(rid)) + '</b>\n\n' + sc.text, { reply_markup: sc.kb });
+    }
+    if (mode === 'dt' || mode === 'dw') {
+      if (!sd.from_id) return;
+      await edit(chat, mid, '✅ Liniya: <b>' + (await routeOf(sd.from_id, rid)) + '</b>');
+      if (st === 'd_reg2') return finishReg(chat, from, sd, sd.from_id, rid);
       const dr = await getDriver(chat);
       if (!dr) return home(chat, 'Avval «' + B.drv + '» orqali ro‘yxatdan o‘ting.');
-      await db.q('update ln_drivers set region_id=$2 where tg_id=$1', [chat, rid]); await clrSt(chat);
-      return send(chat, '📍 Liniyangiz almashdi: <b>' + esc(await pathName(rid)) + '</b>' + (isPaid(dr) ? '\nEndi «' + B.on + '» ni bosing.' : '\nLiniyaga chiqish uchun oylik to‘lov kerak.'), { reply_markup: await menuKb(chat) });
+      await db.q('update ln_drivers set region_id=$2, to_id=$3 where tg_id=$1', [chat, sd.from_id, rid]); await clrSt(chat);
+      return send(chat, '📍 Liniyangiz: <b>' + (await routeOf(sd.from_id, rid)) + '</b>' + (isPaid(dr) ? '\nEndi «' + B.on + '» ni bosing.' : '\nLiniyaga chiqish uchun oylik to‘lov kerak.'), { reply_markup: await menuKb(chat) });
     }
     return;
   }

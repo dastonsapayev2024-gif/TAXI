@@ -58,6 +58,10 @@ do $seed$ declare x int; q int; begin
     insert into ln_regions(parent_id,name,kind) values (x,'Urganch','tuman');
   end if;
 end $seed$;
+alter table ln_drivers add column if not exists to_id int;
+alter table ln_orders add column if not exists to_id int;
+alter table ln_orders add column if not exists people int;
+alter table ln_orders add column if not exists uname text;
 update ln_regions set name='O‘rta Qishloq (Nezaxos)' where name='O‘rta Qishloq' and kind='mahalla';
 insert into ln_regions(parent_id,name,kind,active) select null, v, 'viloyat', false from unnest(array['Toshkent shahri','Toshkent viloyati','Samarqand','Buxoro','Navoiy','Qashqadaryo','Surxondaryo','Jizzax','Sirdaryo','Farg‘ona','Andijon','Namangan','Qoraqalpog‘iston']) as v on conflict do nothing;
 
