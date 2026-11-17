@@ -82,8 +82,8 @@ button.go{box-shadow:0 8px 18px #ff6a3d55}button.go:disabled{box-shadow:none}
   <div id="map"><button id="back" aria-label="Orqaga">←</button><button id="gps" aria-label="Mening joylashuvim">📍</button></div>
   <div id="sheet">
     <div id="form">
-      <div class="f on" id="fa"><i>🟢</i><input id="ia" placeholder="Qayerdan? (xaritadan tanlang yoki yozing)" autocomplete="off"></div>
-      <div class="f" id="fb"><i>🔴</i><input id="ib" placeholder="Qayerga?" autocomplete="off"></div>
+      <div class="f on" id="fa"><i>🟢</i><input id="ia" placeholder="Qayerdan? (joylashuvingiz avtomatik)" autocomplete="off"></div>
+      <div class="f" id="fb"><i>🔴</i><input id="ib" placeholder="Qayerga? Manzilni yozing" autocomplete="off"></div>
       <div class="res" id="res" style="display:none"></div>
       <div class="inf" id="inf" style="display:none"><span><b id="pr">—</b><br><small id="kmx"></small></span><span style="font-size:30px">🚕</span></div>
       <div class="row"><div class="f"><i>👤</i><input id="nm" placeholder="Ismingiz" maxlength="40" autocomplete="name"></div></div>
@@ -117,7 +117,7 @@ function jf(url,ms){var c=new AbortController(),t=setTimeout(function(){c.abort(
 
 /* ---- xarita ---- */
 var map=L.map('map',{zoomControl:false,attributionControl:true}).setView(CFG.center,13);
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:20,maxNativeZoom:19,detectRetina:true,attribution:'© OpenStreetMap'}).addTo(map);
 var mk={},line=null;
 function icon(c,t){return L.divIcon({className:'',html:'<div class="pin" style="background:'+c+'"><span>'+t+'</span></div>',iconSize:[30,30],iconAnchor:[15,30]})}
 function setPoint(w,lat,lng,addr,fly){
@@ -206,12 +206,22 @@ var POP=[{addr:'Amir Temur xiyoboni',lat:41.3111,lng:69.2797},{addr:'Toshkent ae
 function esc2(t){return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;')}
 function renderHome(){var L2=rec.length?rec:POP;$('#rt').textContent=rec.length?'Oxirgi manzillar':'Mashhur joylar';
  $('#rl').innerHTML=L2.map(function(a,i){return '<button class="rec" data-i="'+i+'"><i>'+(rec.length?'🕘':'📍')+'</i>'+esc2(a.addr)+'</button>'}).join('');
- Array.prototype.forEach.call(document.querySelectorAll('.rec'),function(b){b.onclick=function(){var a=L2[+b.getAttribute('data-i')];openOrder();setPoint('to',a.lat,a.lng,a.addr,true);act('from');autoGps()}})}
-function autoGps(){if(P.from||!navigator.geolocation)return;navigator.geolocation.getCurrentPosition(function(p){if(!P.from){setPoint('from',p.coords.latitude,p.coords.longitude,'',false);act('to')}},function(){},{timeout:8000})}
+ Array.prototype.forEach.call(document.querySelectorAll('.rec'),function(b){b.onclick=function(){var a=L2[+b.getAttribute('data-i')];resetAll();openOrder();setPoint('to',a.lat,a.lng,a.addr,true);act('from');autoGps()}})}
+function resetAll(){['from','to'].forEach(function(w){if(mk[w]){map.removeLayer(mk[w]);delete mk[w]}P[w]=null});if(line){map.removeLayer(line);line=null}if(window.__acc){map.removeLayer(window.__acc);window.__acc=null}$('#ia').value=$('#ib').value='';$('#res').style.display='none';route=null;err('');act('from');calc()}
+function locate(manual){
+ if(!navigator.geolocation){if(manual)err('Joylashuvni aniqlab bo‘lmadi');return}
+ if(manual)err('📍 Joylashuv aniqlanmoqda...');
+ navigator.geolocation.getCurrentPosition(function(p){err('');var la=p.coords.latitude,ln=p.coords.longitude;
+  act('from');setPoint('from',la,ln,'',false);map.setView([la,ln],17);
+  try{if(window.__acc)map.removeLayer(window.__acc);window.__acc=L.circle([la,ln],{radius:Math.min(p.coords.accuracy||20,300),color:'#1976d2',weight:1,fillColor:'#1976d2',fillOpacity:.12}).addTo(map)}catch(e){}
+  if(!P.to)act('to')},
+ function(){if(manual)err('Joylashuvga ruxsat bering yoki xaritadan tanlang')},{enableHighAccuracy:true,timeout:10000,maximumAge:0})}
+function autoGps(){if(P.from)return;locate(false)}
+$('#gps').onclick=function(){locate(true)};
 function openOrder(){document.body.classList.remove('home');setTimeout(function(){map.invalidateSize()},60);window.scrollTo(0,0)}
 function openHome(){document.body.classList.add('home');renderHome()}
-$('#heroB').onclick=function(){openOrder();act('from');autoGps()};
-$('#findB').onclick=function(){openOrder();act('to');setTimeout(function(){$('#ib').focus()},120)};
+$('#heroB').onclick=function(){resetAll();openOrder();act('from');autoGps()};
+$('#findB').onclick=function(){resetAll();openOrder();act('from');autoGps();setTimeout(function(){act('to');$('#ib').focus()},400)};
 $('#back').onclick=openHome;
 try{if(TW&&TW.initDataUnsafe&&TW.initDataUnsafe.start_param==='driver'){location.replace('/drv.html');return}}catch(e){}
 try{var uu=TW&&TW.initDataUnsafe&&TW.initDataUnsafe.user;if(uu&&uu.first_name)$('#hi').firstChild.textContent='Salom, '+uu.first_name.slice(0,20)+' 👋'}catch(e){}
