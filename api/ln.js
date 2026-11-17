@@ -572,14 +572,21 @@ async function ensureMenu(force) {
   if (menuDone && !force) return;
   menuDone = true;
   try {
-    if (!force && (await setting('menu_off', '')) === '1') return;
-    const r = await tg('setChatMenuButton', { menu_button: { type: 'default' } });
-    if (r && r.ok) await setSetting('menu_off', '1'); else menuDone = false;
+    if (!force && (await setting('menu_off', '')) === '2') return;
+    const r = await tg('setChatMenuButton', { menu_button: { type: 'commands' } });
+    if (r && r.ok) await setSetting('menu_off', '2'); else menuDone = false;
   } catch (e) { menuDone = false; }
 }
 const CB = new Set(['pk', 'kd', 'rg', 'rs', 'pw', 'la', 'ld', 'lc', 'pc', 'pa', 'am', 'ia', 'on', 'ch', 'bc', 'bk', 'dc']);
+const menuChats = new Set();
+async function chatMenu(chat) {
+  if (!chat || menuChats.has(chat)) return;
+  menuChats.add(chat);
+  try { await tg('setChatMenuButton', { chat_id: chat, menu_button: { type: 'commands' } }); } catch (e) { menuChats.delete(chat); }
+}
 async function handle(up) {
   await ensureMenu();
+  { const c = (up.message && up.message.chat && up.message.chat.id) || (up.callback_query && up.callback_query.message && up.callback_query.message.chat.id); if (c) await chatMenu(c); }
   if (up.callback_query && up.callback_query.data && up.callback_query.message) {
     if (!CB.has(String(up.callback_query.data).split(':')[0])) return false;
     await onCallback(up.callback_query); return true;
