@@ -71,4 +71,8 @@ async function closeGroup(msg, label) {
   if (!msg || !g) return;
   try { await tg('editMessageReplyMarkup', { chat_id: g, message_id: Number(msg), reply_markup: { inline_keyboard: [[{ text: label, callback_data: 'x' }]] } }); } catch (e) { /* e'tiborsiz */ }
 }
-module.exports = { CFG, esc, tg, token, secret, distKm, priceOf, fmt, checkInit, closeGroup };
+let botUn = '';
+async function botName() { if (!botUn) { try { const r = await tg('getMe', {}); botUn = r && r.result ? r.result.username : ''; } catch (e) { /* e'tiborsiz */ } } return botUn; }
+function baseUrl(req) { const e = String(process.env.APP_URL || '').trim().replace(/\/$/, ''); if (e) return e; const h = req && req.headers && (req.headers['x-forwarded-host'] || req.headers.host); return h ? 'https://' + h : ''; }
+async function driverLink() { const bn = await botName(); return bn ? 'https://t.me/' + bn + '/' + (String(process.env.APP_SHORT || '').trim() || 'taksi') + '?startapp=driver' : ''; }
+module.exports = { botName, baseUrl, driverLink, CFG, esc, tg, token, secret, distKm, priceOf, fmt, checkInit, closeGroup };

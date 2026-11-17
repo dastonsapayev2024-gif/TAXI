@@ -39,9 +39,7 @@ async function onPrivate(m) {
         '💼 Komissiya: faqat <b>' + CFG.feePct + '%</b> (boshqa xizmatlardan arzon)\n' +
         '🎁 Dastlabki <b>' + d.free_left + '</b> buyurtma komissiyasiz\n' +
         '💰 Balansingiz: <b>' + fmt(d.balance) + ' so‘m</b>\n\n' +
-        'Buyurtmalar haydovchilar guruhiga tushadi. «✅ Qabul qilaman» ni bosing: raqam sizga ko‘rinadi, komissiya balansdan yechiladi. Noto‘g‘ri buyurtmani ' + CFG.cancelMin + ' daqiqa ichida bekor qilsangiz, komissiya qaytadi.', { reply_markup: MENU }).then(async () => {
-        if (!d.car) { await db.q("update drivers set state='car' where tg_id=$1", [from.id]); await send(chat, CAR_ASK); }
-      });
+        'Buyurtmalarni <b>haydovchi ilovasida</b> ko‘rasiz va qabul qilasiz: raqam sizga ko‘rinadi, komissiya balansdan yechiladi. Noto‘g‘ri buyurtmani ' + CFG.cancelMin + ' daqiqa ichida bekor qilsangiz, komissiya qaytadi.', { reply_markup: MENU }).then(() => send(chat, '👇 Ilovani oching (birinchi marta mashina ma‘lumotini so‘raydi):', { reply_markup: { inline_keyboard: [[{ text: '🚕 Haydovchi ilovasi', web_app: { url: BASE + '/drv.html' } }]] } }));
     }
     const app = String(process.env.APP_LINK || '').trim();
     return send(chat, '🚕 <b>Baxu Taksi</b>\n\nTaksi buyurtma qilish uchun pastdagi tugmani bosing.\n\nHaydovchi bo‘lmoqchimisiz? /start driver deb yozing.',
@@ -96,6 +94,7 @@ async function onPrivate(m) {
       reply_markup: { inline_keyboard: [[{ text: '✅ Tasdiqlash', callback_data: 't:ok:' + r.rows[0].id }, { text: '❌ Rad etish', callback_data: 't:no:' + r.rows[0].id }]] } });
     return send(chat, '✅ Chek yuborildi. Admin tasdiqlagach, balansingiz to‘ldiriladi (odatda bir necha daqiqa).');
   }
+  if (/^\/app$/i.test(t)) return send(chat, '🚕 Haydovchi ilovasi:', { reply_markup: { inline_keyboard: [[{ text: '🚕 Ochish', web_app: { url: BASE + '/drv.html' } }]] } });
   if (/^(💰 Balans|\/balans)$/i.test(t)) return send(chat, '💰 Balansingiz: <b>' + fmt(d.balance) + ' so‘m</b>\n🎁 Bepul buyurtmalar: ' + d.free_left + '\n💼 Komissiya: ' + CFG.feePct + '%', { reply_markup: MENU });
   if (/^(➕ To‘ldirish|➕ To'ldirish|\/toldirish)$/i.test(t)) {
     await db.q("update drivers set state='amount', state_n=0 where tg_id=$1", [from.id]);
@@ -113,7 +112,7 @@ async function onPrivate(m) {
     if (!r.rows.length) return send(chat, 'Hozircha buyurtma yo‘q.');
     return send(chat, '📋 <b>Oxirgi buyurtmalar</b>\n\n' + r.rows.map(o => '#' + o.id + ' · ' + fmt(o.price) + ' so‘m · ' + (o.status === 'done' ? '✅' : '🚕') + '\n' + esc((o.fromp && o.fromp.addr) || '?') + ' → ' + esc((o.top && o.top.addr) || '?')).join('\n\n'));
   }
-  if (/^(ℹ️ Yordam|\/help|\/yordam)$/i.test(t)) return send(chat, 'ℹ️ Buyurtmalar guruhga tushadi. «Qabul qilaman» ni bosing, raqam sizga ko‘rinadi. Balans tugasa, «➕ To‘ldirish» orqali kartaga o‘tkazib chek yuboring.');
+  if (/^(ℹ️ Yordam|\/help|\/yordam)$/i.test(t)) return send(chat, 'ℹ️ Buyurtmalarni haydovchi ilovasida qabul qilasiz: pastdagi tugma yoki /app. Balans tugasa, «➕ To‘ldirish» orqali kartaga o‘tkazib chek yuboring.', { reply_markup: { inline_keyboard: [[{ text: '🚕 Haydovchi ilovasi', web_app: { url: BASE + '/drv.html' } }]] } });
   return send(chat, 'Menyudan tanlang 👇', { reply_markup: MENU });
 }
 

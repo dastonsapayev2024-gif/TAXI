@@ -1,5 +1,5 @@
 'use strict';
-const { CFG, esc, tg, distKm, priceOf, fmt, checkInit } = require('./_lib');
+const { CFG, esc, tg, distKm, priceOf, fmt, checkInit, baseUrl, driverLink } = require('./_lib');
 const db = require('./_db');
 const crypto = require('crypto');
 
@@ -48,12 +48,10 @@ module.exports = async (req, res) => {
     last.set(phone, now); if (last.size > 500) last.clear();
 
     const group = String(process.env.GROUP_ID || '').trim();
-    if (!group) return res.status(500).json({ error: 'Server sozlanmagan (GROUP_ID)' });
 
     const u = checkInit(b.initData);
     const uid = u ? u.id : 0;
     const id = (now.toString(36) + Math.random().toString(36).slice(2, 4)).toUpperCase().slice(-8);
-    const yx = 'https://yandex.com/maps/?rtext=' + from.lat + ',' + from.lng + '~' + to.lat + ',' + to.lng + '&rtt=auto';
     const text =
       '🚕 <b>Yangi buyurtma</b> #' + id + '\n\n' +
       '📍 <b>Qayerdan:</b> ' + esc(from.addr || (from.lat + ', ' + from.lng)) + '\n' +
@@ -62,19 +60,28 @@ module.exports = async (req, res) => {
       '💰 <b>Narx: ' + fmt(price) + ' so‘m</b>\n' +
       '💼 Komissiya (' + CFG.feePct + '%): ' + fmt(fee) + ' so‘m · Sizga: ' + fmt(price - fee) + ' so‘m' +
       (note ? '\n🗒 ' + esc(note) : '') + '\n\n' +
-      '👤 ' + esc(name) + ' · telefon qabul qilgach ko‘rinadi';
+      '👆 Qabul qilish uchun ilovani oching: «🚕 Haydovchi ilovasi»';
     const tokn = crypto.randomBytes(9).toString('base64url');
     await db.q('insert into orders(id,uid,phone,name,fromp,top,km,price,fee,token) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
       [id, uid, phone.slice(3), name, JSON.stringify(from), JSON.stringify(to), km, price, fee, tokn]);
-    const r = await tg('sendMessage', {
-      chat_id: group, text, parse_mode: 'HTML', disable_web_page_preview: true,
-      reply_markup: { inline_keyboard: [
-        [{ text: '✅ Qabul qilaman', callback_data: 'a:' + id }],
-        [{ text: '🗺 Yo‘nalish (Yandex)', url: yx }]
-      ] }
-    });
-    if (!r || !r.ok) { await db.q("update orders set status='failed' where id=$1", [id]).catch(() => {}); return res.status(502).json({ error: 'Buyurtma yuborilmadi. Keyinroq urinib ko‘ring' }); }
-    if (r.result && r.result.message_id) await db.q('update orders set tg_msg=$1 where id=$2', [r.result.message_id, id]).catch(() => {});
+    // 1) haydovchilar guruhiga (ixtiyoriy): faqat xabar, qabul qilish ilovada
+    if (group) {
+      const dl = await driverLink();
+      const r = await tg('sendMessage', {
+        chat_id: group, text, parse_mode: 'HTML', disable_web_page_preview: true,
+        reply_markup: dl ? { inline_keyboard: [[{ text: '🚕 Haydovchi ilovasi', url: dl }]] } : undefined
+      }).catch(() => null);
+      if (r && r.ok && r.result && r.result.message_id) await db.q('update orders set tg_msg=$1 where id=$2', [r.result.message_id, id]).catch(() => {});
+    }
+    // 2) ro'yxatdan o'tgan haydovchilarga shaxsiy xabar (ilovani ochish tugmasi bilan)
+    try {
+      const base = baseUrl(req);
+      const ds = (await db.q("select tg_id from drivers where blocked=false and car<>'' order by created desc limit 80")).rows;
+      if (base && ds.length) {
+        const dm = '🚕 <b>Yangi buyurtma</b> #' + id + '\n📍 ' + esc(from.addr || '—') + '\n🏁 ' + esc(to.addr || '—') + '\n📏 ~' + km + ' km · 💰 ' + fmt(price) + ' so‘m (sizga ' + fmt(price - fee) + ')';
+        await Promise.allSettled(ds.map(d => tg('sendMessage', { chat_id: Number(d.tg_id), text: dm, parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '🚕 Ochish va qabul qilish', web_app: { url: base + '/drv.html' } }]] } })));
+      }
+    } catch (e) { /* buyurtma baribir ilovada ko'rinadi */ }
     return res.status(200).json({ ok: true, id, token: tokn, price, km, expire: CFG.expireMin * 60 });
   } catch (e) {
     return res.status(500).json({ error: 'Server xatosi' });

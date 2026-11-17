@@ -97,7 +97,7 @@ begin
   if o.taken_at < now() - make_interval(mins => p_min) then return json_build_object('err','late'); end if;
   update drivers set balance = balance + o.fee_paid, free_left = free_left + (case when o.free_used then 1 else 0 end) where tg_id = p_did;
   if o.fee_paid > 0 then insert into ledger(driver_id, delta, kind, ref) values (p_did, o.fee_paid, 'refund', p_oid); end if;
-  update orders set status='new', driver_id=null, fee_paid=0, free_used=false, taken_at=null where id = p_oid;
+  update orders set status='new', driver_id=null, fee_paid=0, free_used=false, taken_at=null, dlat=null, dlng=null, dts=null where id = p_oid;
   return json_build_object('ok',true,'refund',o.fee_paid);
 end $fn$;
 
