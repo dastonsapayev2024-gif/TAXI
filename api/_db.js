@@ -32,6 +32,7 @@ create index if not exists orders_driver_idx on orders(driver_id, created desc);
 
 alter table drivers add column if not exists car text not null default '';
 alter table drivers add column if not exists phone text not null default '';
+create table if not exists settings(key text primary key, val text not null, updated timestamptz not null default now());
 alter table drivers add column if not exists verified boolean not null default false;
 alter table drivers add column if not exists online boolean not null default false;
 alter table drivers add column if not exists seen timestamptz;

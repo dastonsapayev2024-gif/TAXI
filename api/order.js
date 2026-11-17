@@ -1,5 +1,5 @@
 'use strict';
-const { CFG, esc, tg, distKm, priceOf, fmt, checkInit, baseUrl, driverLink } = require('./_lib');
+const { loadCfg, CFG, esc, tg, distKm, priceOf, fmt, checkInit, baseUrl, driverLink } = require('./_lib');
 const db = require('./_db');
 const crypto = require('crypto');
 
@@ -20,6 +20,7 @@ function phoneOf(v) {
 module.exports = async (req, res) => {
   res.setHeader('cache-control', 'no-store');
   if (req.method === 'GET') {
+    await loadCfg();
     return res.status(200).json({ base: CFG.base, perKm: CFG.perKm, min: CFG.min, round: CFG.round, center: CFG.center, bounds: CFG.bounds, maxKm: CFG.maxKm });
   }
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -41,6 +42,7 @@ module.exports = async (req, res) => {
     km = Math.max(0.5, +km.toFixed(1));
     if (km > CFG.maxKm) return res.status(400).json({ error: 'Masofa juda uzoq (' + CFG.maxKm + ' km gacha)' });
     const min = Math.max(1, Math.round(+b.min || km * 2.5)); // taxminiy vaqt (daqiqa)
+    await loadCfg();
     const price = priceOf(km), fee = Math.round(price * CFG.feePct / 100 / 100) * 100;
 
     const now = Date.now();

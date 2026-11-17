@@ -45,6 +45,19 @@ function priceOf(km) {
   const p = Math.round(raw / CFG.round) * CFG.round;
   return Math.max(CFG.min, p);
 }
+// Admin botdan o'zgartiriladigan narxlar (bazadagi settings jadvali). 20 soniya keshlanadi.
+const PRICE_KEYS = { perKm: [500, 20000], base: [1000, 50000], min: [1000, 100000] };
+let _cfgAt = 0;
+async function loadCfg(force) {
+  if (!force && Date.now() - _cfgAt < 20000) return CFG;
+  try {
+    const db = require('./_db');
+    const r = await db.q("select key, val from settings where key in ('perKm','base','min')");
+    for (const x of r.rows) { const n = Number(x.val), lim = PRICE_KEYS[x.key]; if (Number.isFinite(n) && n >= lim[0] && n <= lim[1]) CFG[x.key] = n; }
+    _cfgAt = Date.now();
+  } catch (e) { /* baza o'qilmasa eski narx qoladi */ }
+  return CFG;
+}
 const fmt = n => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
 
 // Telegram Mini App initData tekshiruvi (foydalanuvchi shaxsi soxta bo'lmasligi uchun)
@@ -75,4 +88,4 @@ let botUn = '';
 async function botName() { if (!botUn) { try { const r = await tg('getMe', {}); botUn = r && r.result ? r.result.username : ''; } catch (e) { /* e'tiborsiz */ } } return botUn; }
 function baseUrl(req) { const e = String(process.env.APP_URL || '').trim().replace(/\/$/, ''); if (e) return e; const h = req && req.headers && (req.headers['x-forwarded-host'] || req.headers.host); return h ? 'https://' + h : ''; }
 async function driverLink() { const bn = await botName(); return bn ? 'https://t.me/' + bn + '/' + (String(process.env.APP_SHORT || '').trim() || 'taksi') + '?startapp=driver' : ''; }
-module.exports = { botName, baseUrl, driverLink, CFG, esc, tg, token, secret, distKm, priceOf, fmt, checkInit, closeGroup };
+module.exports = { loadCfg, PRICE_KEYS, botName, baseUrl, driverLink, CFG, esc, tg, token, secret, distKm, priceOf, fmt, checkInit, closeGroup };

@@ -1,6 +1,6 @@
 'use strict';
 const crypto = require('crypto');
-const { CFG, esc, tg, secret, fmt, closeGroup } = require('./_lib');
+const { loadCfg, PRICE_KEYS, CFG, esc, tg, secret, fmt, closeGroup } = require('./_lib');
 const db = require('./_db');
 
 const same = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); };
@@ -60,12 +60,22 @@ async function onPrivate(m) {
       await send(m2[1], '💰 Balansingiz ' + (+m2[2] >= 0 ? 'to‘ldirildi: +' : 'o‘zgartirildi: ') + fmt(m2[2]) + ' so‘m. Yangi balans: <b>' + fmt(r.bal) + ' so‘m</b>').catch(() => {});
       return send(chat, '✅ Tayyor. Yangi balans: ' + fmt(r.bal) + ' so‘m');
     }
+    if ((m2 = t.match(/^\/narx(?:@\w+)?(?:\s+(?:(base|min|km)\s+)?(\d{3,6}))?$/i))) {
+      if (m2[2]) {
+        const key = ({ base: 'base', min: 'min', km: 'perKm' })[(m2[1] || 'km').toLowerCase()], n = +m2[2], lim = PRICE_KEYS[key];
+        if (n < lim[0] || n > lim[1]) return send(chat, '❌ Narx ' + fmt(lim[0]) + ' dan ' + fmt(lim[1]) + ' gacha bo‘lishi kerak.');
+        await db.q("insert into settings(key,val) values($1,$2) on conflict (key) do update set val=excluded.val, updated=now()", [key, String(n)]);
+        CFG[key] = n;
+      }
+      await loadCfg(true);
+      return send(chat, '💵 <b>Narx</b>\n\n1 km: <b>' + fmt(CFG.perKm) + '</b> so‘m\nBoshlang‘ich (1-km kiradi): <b>' + fmt(CFG.base) + '</b> so‘m\nEng kam: <b>' + fmt(CFG.min) + '</b> so‘m\n\nO‘zgartirish:\n/narx 2500 — 1 km narxi\n/narx base 6000 — boshlang‘ich\n/narx min 9000 — eng kam\n\nYangi narx 20 soniya ichida hammaga ishlaydi. Ochiq turgan ilovada yo‘lovchi qayta ochsa yangilanadi.');
+    }
     if ((m2 = t.match(/^\/(block|unblock)\s+(\d{4,15})$/))) {
       await db.q('update drivers set blocked=$1 where tg_id=$2', [m2[1] === 'block', m2[2]]);
       return send(chat, m2[1] === 'block' ? '⛔ Bloklandi' : '✅ Blok olindi');
     }
     if (/^\/(panel|admin)$/.test(t)) return send(chat, '🛠 <b>Admin paneli</b> (xarita, statistika, haydovchilar, buyurtmalar):', { reply_markup: { inline_keyboard: [[{ text: '🛠 Panelni ochish', web_app: { url: BASE + '/admin.html' } }]] } });
-    if (/^\/(help|yordam)$/.test(t)) return send(chat, '/panel — admin paneli\n/stat — statistika\n/add ID SUMMA — balans qo‘shish (minus ham mumkin)\n/block ID, /unblock ID');
+    if (/^\/(help|yordam)$/.test(t)) return send(chat, '/panel — admin paneli\n/stat — statistika\n/add ID SUMMA — balans qo‘shish (minus ham mumkin)\n/narx — narxni ko‘rish va o‘zgartirish (/narx 2500)\n/block ID, /unblock ID');
   }
 
   // ---- haydovchi menyusi ----
