@@ -72,7 +72,7 @@ const TXD = [
   ['h.tm', '1-oyna sarlavhasi (mahalla taksisi)', '🏁 Qayerga borasiz?'], ['h.fm', '2-oyna sarlavhasi (mahalla taksisi)', '📍 Qayerdan minasiz?'],
   ['h.pt', '1-oyna sarlavhasi (viloyat taksisi)', '🏁 Qayerga borasiz?'], ['h.pf', '2-oyna sarlavhasi (viloyat taksisi)', '📍 Qayerdan minasiz?'],
   ['h.dm', 'Haydovchi: mahalla tanlash sarlavhasi', '🚕 Qaysi mahallada ishlaysiz?'], ['h.dv', 'Haydovchi: tuman tanlash sarlavhasi', '🚕 Qaysi tumandan ishlaysiz?'],
-  ['hint_root', 'Izoh: viloyat tanlash', 'Viloyatni tanlang:'], ['hint_tuman', 'Izoh: tuman tanlash', 'Tumanni tanlang:'],
+  ['hint_flat', 'Izoh: mahalla taksisi ro‘yxati', 'Joyni tanlang:'], ['hint_root', 'Izoh: viloyat tanlash', 'Viloyatni tanlang:'], ['hint_tuman', 'Izoh: tuman tanlash', 'Tumanni tanlang:'],
   ['hint_mahalla', 'Izoh: mahalla tanlash ({n} = tuman nomi)', 'Mahallani tanlang yoki «Butun {n}» ni bosing:'],
   ['whole', 'Tugma: butun tuman ({n} = tuman nomi)', '✅ Butun {n}'], ['back', 'Tugma: orqaga', '⬅️ Orqaga'],
   ['l_from', 'Haydovchiga: qayerdan', '📍 Qayerdan minadi'], ['l_to', 'Haydovchiga: qayerga', '🏁 Qayerga boradi']
@@ -92,6 +92,20 @@ async function loadTx(force) {
   TXOV = o; txAt = Date.now();
 }
 async function regScreen(mode, nodeId) {
+  // mahalla taksisi va mahalla haydovchisi: bitta tekis ro'yxat (oyna ichida oyna yo'q)
+  if (mode === 'tm' || mode === 'fm' || mode === 'dm') {
+    const tum = [], mah = [];
+    for (const v of (await kids(null)).filter(k => k.active)) {
+      for (const t of (await kids(v.id)).filter(k => k.active)) {
+        tum.push(t);
+        for (const m of (await kids(t.id)).filter(k => k.active)) mah.push(m);
+      }
+    }
+    const srt = (x, y) => String(x.name).localeCompare(String(y.name), 'uz');
+    const all = mah.sort(srt).concat(tum.sort(srt));
+    if (!all.length) return { text: HEAD[mode] + '\n\nBu yerda hududlar hali qo‘shilmagan. Tez kunda ishga tushadi.', kb: { inline_keyboard: [] } };
+    return { text: HEAD[mode] + '\n\n' + esc(TX.hint_flat), kb: { inline_keyboard: all.map(k => [{ text: k.name, callback_data: 'rs:' + mode + ':' + k.id }]) } };
+  }
   // mahalla taksisi: faqat ishlaydigan hududlar; bitta viloyat bo'lsa to'g'ri o'shandan boshlanadi
   const local = mode === 'tm' || mode === 'fm' || mode === 'dm';
   let solo = false;
