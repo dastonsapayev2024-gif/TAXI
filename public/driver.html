@@ -25,7 +25,7 @@ a.b{display:block;text-align:center;text-decoration:none}
 .pin{width:30px;height:30px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.4)}.pin span{display:block;transform:rotate(45deg);color:#fff;font-weight:800;font-size:13px;text-align:center;line-height:26px}
 </style></head><body>
 <div id="map"></div>
-<div id="top"><div id="ar">🧭</div><div id="tx"><b id="ti">Joylashuv aniqlanmoqda...</b><small id="ts">GPS ni yoqing va ruxsat bering</small></div><button id="snd" title="Ovoz">🔊</button></div>
+<div id="top"><a href="/drv.html" id="bk" style="color:#fff;text-decoration:none;font-size:24px;padding-right:2px">←</a><div id="ar">🧭</div><div id="tx"><b id="ti">Joylashuv aniqlanmoqda...</b><small id="ts">GPS ni yoqing va ruxsat bering</small></div><button id="snd" title="Ovoz">🔊</button></div>
 <div id="bot">
   <div class="r"><div><div id="who">Yo‘lovchi</div><div id="sub"></div></div><div id="eta" style="text-align:right;font-weight:700"></div></div>
   <div class="row2"><a class="b l" id="call" href="#">📞 Qo‘ng‘iroq</a><a class="b l" id="ya" href="#" target="_blank" rel="noopener">🗺 Yandex</a></div>
@@ -101,7 +101,7 @@ function onPos(p){me=[p.coords.latitude,p.coords.longitude];
  if(!R||now-lastRoute>60000||(R&&offRoute(me,R.pts)>60&&now-lastRoute>8000))route();else update();
  if(now-lastSend>4000){lastSend=now;post({action:'pos',lat:me[0],lng:me[1]}).then(function(j){if(j&&j.status&&j.status!=='taken')ended(j.status)}).catch(function(){})}}
 function onErr(e){$('#ti').textContent='GPS ishlamayapti';$('#ts').textContent=e&&e.code===1?'Telefon sozlamalarida joylashuvga ruxsat bering':'Ochiq joyga chiqing yoki GPS ni yoqing'}
-function ended(s){navigator.geolocation&&navigator.geolocation.clearWatch&&wid!=null&&navigator.geolocation.clearWatch(wid);fatal(s==='cancelled'?'❌ Yo‘lovchi buyurtmani bekor qildi.\nKomissiya balansingizga qaytarildi.':s==='done'?'🏁 Safar yakunlandi. Rahmat!':'Buyurtma yopilgan.')}
+function ended(s){setTimeout(function(){if(s==='done')location.href='/drv.html'},2500);navigator.geolocation&&navigator.geolocation.clearWatch&&wid!=null&&navigator.geolocation.clearWatch(wid);fatal(s==='cancelled'?'❌ Yo‘lovchi buyurtmani bekor qildi.\nKomissiya balansingizga qaytarildi.':s==='done'?'🏁 Safar yakunlandi. Rahmat!':'Buyurtma yopilgan.')}
 
 var wid=null;
 $('#st').onclick=function(){

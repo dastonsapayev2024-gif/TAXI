@@ -78,7 +78,7 @@ button.go{box-shadow:0 8px 18px #ff6a3d55}button.go:disabled{box-shadow:none}
 <div class="tiles"><div class="tile"><svg viewBox="0 0 60 48"><rect x="2" y="10" width="34" height="24" rx="4" fill="#0f766e"/><path d="M36 18h12l9 9v7H36z" fill="#ff6a3d"/><circle cx="14" cy="36" r="6" fill="#0c2f33"/><circle cx="46" cy="36" r="6" fill="#0c2f33"/></svg>Yuk<small>Tez orada</small></div><div class="tile"><svg viewBox="0 0 60 48"><path d="M8 16l22-10 22 10v22L30 46 8 38z" fill="#f3b562"/><path d="M8 16l22 10 22-10M30 26v20" stroke="#0c2f33" stroke-width="2.5" fill="none"/></svg>Kuryer<small>Tez orada</small></div><div class="tile"><svg viewBox="0 0 60 48"><path d="M10 40c0-14 14-8 20-16s2-14 20-14" stroke="#0f766e" stroke-width="4" fill="none" stroke-linecap="round" stroke-dasharray="1 8"/><circle cx="10" cy="40" r="6" fill="#ff6a3d"/><circle cx="50" cy="10" r="6" fill="#0c2f33"/></svg>Shaharlararo<small>Tez orada</small></div></div>
 <button class="find" id="findB"><i>🔎</i>Qayerga boramiz?</button>
 <div class="sec" id="rt">Mashhur joylar</div><div id="rl"></div>
-<div class="drv">🚕 <b>Haydovchimisiz?</b> Bizda komissiya atigi <b>7%</b>, dastlabki 3 ta buyurtma komissiyasiz. Botga o‘tib /start driver deb yozing.</div></div><div id="app">
+<div class="drv">🚕 <b>Haydovchimisiz?</b> Bizda komissiya atigi <b>7%</b>, dastlabki 3 ta buyurtma komissiyasiz. <a href="/drv.html" style="color:#ff6a3d;font-weight:700;white-space:nowrap">Haydovchi ilovasi →</a></div></div><div id="app">
   <div id="map"><button id="back" aria-label="Orqaga">←</button><button id="gps" aria-label="Mening joylashuvim">📍</button></div>
   <div id="sheet">
     <div id="form">
@@ -213,6 +213,7 @@ function openHome(){document.body.classList.add('home');renderHome()}
 $('#heroB').onclick=function(){openOrder();act('from');autoGps()};
 $('#findB').onclick=function(){openOrder();act('to');setTimeout(function(){$('#ib').focus()},120)};
 $('#back').onclick=openHome;
+try{if(TW&&TW.initDataUnsafe&&TW.initDataUnsafe.start_param==='driver'){location.replace('/drv.html');return}}catch(e){}
 try{var uu=TW&&TW.initDataUnsafe&&TW.initDataUnsafe.user;if(uu&&uu.first_name)$('#hi').firstChild.textContent='Salom, '+uu.first_name.slice(0,20)+' 👋'}catch(e){}
 var ag=$('#again'),agOld=ag.onclick;ag.onclick=function(){agOld();openHome()};
 window.__saveRec=function(){if(!P.to||!P.to.addr)return;rec=[{addr:P.to.addr,lat:P.to.lat,lng:P.to.lng}].concat(rec.filter(function(r){return r.addr!==P.to.addr})).slice(0,3);try{localStorage.setItem('taxi_rec',JSON.stringify(rec))}catch(e){}};
