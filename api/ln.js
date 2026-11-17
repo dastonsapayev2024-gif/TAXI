@@ -58,7 +58,7 @@ async function pathName(id) {
 // mode: tm/fm (mahalla taksi: qayerga/qayerdan), pt/pf (viloyat taksi: qayerga/qayerdan), dm/dv (haydovchi: mahalla/viloyat)
 const TUMAN_ONLY = m => m === 'pf' || m === 'pt' || m === 'dv';
 const HEAD = {
-  tm: '🏁 <b>Qayerga borasiz?</b>', fm: '📍 <b>Qayerdan yo‘lga chiqasiz?</b>', pt: '🏁 <b>Qayerga borasiz?</b>', pf: '📍 <b>Qayerdan yo‘lga chiqasiz?</b>',
+  tm: '🏁 <b>Qayerga borasiz?</b>', fm: '📍 <b>Qayerdan minasiz?</b>', pt: '🏁 <b>Qayerga borasiz?</b>', pf: '📍 <b>Qayerdan minasiz?</b>',
   dm: '🚕 <b>Qaysi mahallada ishlaysiz?</b>', dv: '🚕 <b>Qaysi tumandan ishlaysiz?</b>'
 };
 async function regScreen(mode, nodeId) {
@@ -124,9 +124,7 @@ async function eligible(kind, rid, except) {
 async function placeOrder(uid, pname, phone, data) {
   const ids = await eligible(data.k, data.rid, uid);
   if (!ids.length) { await clrSt(uid); return home(uid, '😔 Hozir bu hududda liniyada haydovchi yo‘q. Birozdan keyin qayta urinib ko‘ring.'); }
-  const id = newId(), where = data.k === 'viloyat'
-    ? 'Qayerdan: <b>' + esc(await pathName(data.rid)) + '</b>\n🏁 Qayerga: <b>' + esc(data.to_text || '—') + '</b>'
-    : 'Hudud: <b>' + esc(await pathName(data.rid)) + '</b>' + (data.to_text ? '\n🏁 Qayerga: <b>' + esc(data.to_text) + '</b>' : '');
+  const id = newId(), where = '📍 Qayerdan minadi: <b>' + esc(await pathName(data.rid)) + '</b>\n🏁 Qayerga boradi: <b>' + esc(data.to_text || '—') + '</b>';
   await db.q('insert into ln_orders(id,uid,pname,phone,kind,region_id,to_text,addr,lat,lng) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
     [id, uid, pname, phone, data.k, data.rid, data.to_text || '', data.addr || '', data.lat == null ? null : data.lat, data.lng == null ? null : data.lng]);
   const text = '🚕 <b>Yangi buyurtma</b> #' + id + '\n📍 ' + where + '\n📌 Manzil: ' + esc(data.addr || 'Lokatsiya') + '\n👤 ' + esc(pname);
@@ -219,7 +217,7 @@ async function accept(q) {
     return answer(q, x && x.status === 'cancelled' ? 'Yo‘lovchi bekor qildi' : 'Boshqa haydovchi oldi', true);
   }
   await answer(q, 'Buyurtma sizniki ✅');
-  const where = o.kind === 'viloyat' ? 'Qayerdan: ' + esc(await pathName(o.region_id)) + '\n🏁 Qayerga: ' + esc(o.to_text || '—') : 'Hudud: ' + esc(await pathName(o.region_id)) + (o.to_text ? '\n🏁 Qayerga: ' + esc(o.to_text) : '');
+  const where = '📍 Qayerdan minadi: ' + esc(await pathName(o.region_id)) + '\n🏁 Qayerga boradi: ' + esc(o.to_text || '—');
   const kb = [[{ text: '🏁 Tugadi', callback_data: 'ld:' + id }, { text: '❌ Bekor', callback_data: 'lc:' + id }]];
   if (o.lat != null) kb.unshift([{ text: '🗺 Xaritada ko‘rish', url: mapLink(o.lat, o.lng) }]);
   await edit(chat, mid, '✅ <b>Siz oldingiz</b> #' + id + '\n\n👤 ' + esc(o.pname) + '\n📞 <b>' + esc(showPhone(o.phone)) + '</b>\n📍 ' + where + '\n📌 ' + esc(o.addr || 'Lokatsiya') + '\n\nYo‘lovchi bilan bog‘lanib, borib oling. Narxni o‘zaro kelishasiz.', { reply_markup: { inline_keyboard: kb } });
