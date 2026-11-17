@@ -67,7 +67,13 @@ module.exports = async (req, res) => {
       if (r.err) return res.status(403).json({ error: 'Qabul qilib bo‘lmadi' });
       const o = (await db.q('select tg_msg from orders where id=$1', [id])).rows[0];
       if (o && o.tg_msg) await closeGroup(o.tg_msg, '🚕 Qabul qilindi: ' + nameOf(u).slice(0, 30));
-      if (+r.uid > 0) tg('sendMessage', { chat_id: +r.uid, parse_mode: 'HTML', text: '🚕 Haydovchi topildi: <b>' + esc(nameOf(u)) + '</b>\n🚗 ' + esc(r.car || '') + '\nBuyurtma #' + esc(id) + '. Tez orada siz bilan bog‘lanadi.' }).catch(() => {});
+      if (+r.uid > 0) {
+        const dr = (await db.q('select phone from drivers where tg_id=$1', [me])).rows[0] || {};
+        const po = (await db.q('select price from orders where id=$1', [id])).rows[0] || {};
+        const ph = /^998\d{9}$/.test(dr.phone || '') ? '+' + dr.phone.replace(/^(\d{3})(\d{2})(\d{3})(\d{2})(\d{2})$/, '$1 $2 $3 $4 $5') : '';
+        const money = String(po.price || '').replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+        tg('sendMessage', { chat_id: +r.uid, parse_mode: 'HTML', text: '✅ <b>Buyurtmangiz tasdiqlandi!</b> #' + esc(id) + '\n\n👤 Haydovchi: <b>' + esc(nameOf(u)) + '</b>\n🚗 ' + esc(r.car || '') + (ph ? '\n📞 ' + ph : '') + (money ? '\n\n💰 Narx: <b>' + money + ' so‘m</b>\nSafar oxirida haydovchiga naqd to‘laysiz.' : '') + '\n\nHaydovchi tez orada siz bilan bog‘lanadi. Xaritani ilovada ko‘rishingiz mumkin.' }).catch(() => {});
+      }
       return res.status(200).json({ ok: true, phone: r.phone, fee: r.fee, free: r.free, balance: r.bal, left: r.left });
     }
     if (b.action === 'cancel') {
