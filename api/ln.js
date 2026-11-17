@@ -135,7 +135,9 @@ async function regScreen(mode, nodeId) {
 }
 
 // ---------- menyu ----------
+let menuFresh = 0;
 async function menuKb(id) {
+  menuFresh = id;
   const d = await getDriver(id), canOrder = !(isPaid(d) && !isAdmin(id)), rows = [];
   if (canOrder) rows.push([{ text: B.taxi }]);
   if (d) rows.push([{ text: d.online ? B.off : B.on }, { text: B.pay }], [{ text: B.line }, { text: B.me }]); else rows.push([{ text: B.drv }]);
@@ -704,7 +706,7 @@ async function chatMenu(chat) {
   menuChats.add(chat);
   try { await tg('setChatMenuButton', { chat_id: chat, menu_button: { type: 'commands' } }); } catch (e) { menuChats.delete(chat); }
 }
-async function handle(up) {
+async function handleInner(up) {
   await loadTx();
   if (up.message && typeof up.message.text === 'string') {
     const t0 = up.message.text;
@@ -722,5 +724,30 @@ async function handle(up) {
     return r !== false;
   }
   return false;
+}
+
+// ---------- menyuni avto yangilash (odam /start bosmasa ham) ----------
+const MENU_VER = '1';   // menyu tuzilishi o'zgarganda oshiring
+let menuTbl = false;
+async function refreshMenu(up) {
+  const chat = up.message && up.message.chat && up.message.chat.type === 'private' ? up.message.chat.id
+    : (up.callback_query && up.callback_query.message && up.callback_query.message.chat.type === 'private' ? up.callback_query.message.chat.id : 0);
+  if (!chat) return;
+  try {
+    if (!menuTbl) { await db.q('create table if not exists ln_menu(tg_id bigint primary key, sig text not null, updated timestamptz not null default now())'); menuTbl = true; }
+    const sig = crypto.createHash('md5').update(MENU_VER + JSON.stringify(B)).digest('hex');
+    const row = (await db.q('select sig from ln_menu where tg_id=$1', [chat])).rows[0];
+    if (row && row.sig === sig) return;
+    const { st } = await getSt(chat);
+    if (st) return;                       // oyna/jarayon ichida turgan odamga tegmaymiz
+    if (menuFresh !== chat) await send(chat, '🔄 Menyu yangilandi.', { reply_markup: await menuKb(chat) });
+    await db.q('insert into ln_menu(tg_id,sig) values($1,$2) on conflict (tg_id) do update set sig=excluded.sig, updated=now()', [chat, sig]);
+  } catch (e) { /* menyu yangilanmasa ham asosiy ish buzilmasin */ }
+}
+async function handle(up) {
+  menuFresh = 0;
+  const r = await handleInner(up);
+  await refreshMenu(up);
+  return r;
 }
 module.exports = { handle };
