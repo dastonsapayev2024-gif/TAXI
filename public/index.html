@@ -71,14 +71,14 @@ body.home #app{display:none}body:not(.home) #home{display:none}
 button.go{box-shadow:0 8px 18px #ff6a3d55}button.go:disabled{box-shadow:none}
 .f.on{box-shadow:0 0 0 3px #ff6a3d22}
 #back{position:absolute;left:10px;top:10px;z-index:500;width:44px;height:44px;border-radius:50%;border:0;background:#fff;font-size:20px;font-weight:900;box-shadow:0 2px 10px #0004;color:var(--ink)}
-</style></head><body class="home">
+#onb{position:fixed;inset:0;z-index:9000;background:#0c2f33;display:none;align-items:center;justify-content:center;padding:20px}#onb .ob{background:#fff;border-radius:24px;padding:22px 18px;width:100%;max-width:420px}#onb .obt{font-size:22px;font-weight:800;color:#0c2f33;margin-bottom:6px}#onb .obt i{color:#ff6a3d;font-style:normal}#onb h2{margin:6px 0 4px;font-size:20px}#onb p{margin:0 0 10px;color:#5b6b7e;font-size:14px}#onb label{display:block;font-weight:700;font-size:14px;margin-top:10px}#onb input{width:100%;border:1.5px solid #d5dce6;border-radius:12px;padding:13px;font-size:16px;margin-top:5px}#on_e{color:#c62828;font-size:14px;min-height:20px;margin-top:8px}#on_go{width:100%;border:0;border-radius:14px;padding:15px;font-size:17px;font-weight:700;background:#ff6a3d;color:#fff}#on_go[disabled]{opacity:.5}</style></head><body class="home">
 <div id="home"><div class="hh"><div class="brand">Baxu<i>Taksi</i></div><div class="city">📍 Toshkent</div></div>
 <div class="hi" id="hi">Salom 👋<small>Qayerga boramiz?</small></div>
 <button class="hero" id="heroB"><svg viewBox="0 0 220 110" xmlns="http://www.w3.org/2000/svg"><ellipse cx="112" cy="98" rx="92" ry="8" fill="#0006"/><path d="M18 72c0-10 6-16 16-18l22-26c4-5 10-8 17-8h44c8 0 15 3 20 9l17 22c14 2 24 4 24 14v10c0 4-3 7-7 7h-10a19 19 0 0 0-38 0H84a19 19 0 0 0-38 0H25c-4 0-7-3-7-7z" fill="#ff6a3d"/><path d="M68 32h30v23H60zM108 32h26c4 0 6 1 8 4l11 19h-45z" fill="#d8f3ee"/><rect x="88" y="16" width="34" height="12" rx="5" fill="#fff"/><rect x="95" y="19" width="20" height="6" rx="3" fill="#0c2f33"/><circle cx="65" cy="82" r="14" fill="#0c2f33"/><circle cx="65" cy="82" r="6" fill="#cfe"/><circle cx="162" cy="82" r="14" fill="#0c2f33"/><circle cx="162" cy="82" r="6" fill="#cfe"/></svg><b>Taksi</b><span>Manzilni xaritadan tanlang, narx darrov ma’lum</span><em>Chaqirish →</em></button>
 <div class="tiles"><div class="tile"><svg viewBox="0 0 60 48"><rect x="2" y="10" width="34" height="24" rx="4" fill="#0f766e"/><path d="M36 18h12l9 9v7H36z" fill="#ff6a3d"/><circle cx="14" cy="36" r="6" fill="#0c2f33"/><circle cx="46" cy="36" r="6" fill="#0c2f33"/></svg>Yuk<small>Tez orada</small></div><div class="tile"><svg viewBox="0 0 60 48"><path d="M8 16l22-10 22 10v22L30 46 8 38z" fill="#f3b562"/><path d="M8 16l22 10 22-10M30 26v20" stroke="#0c2f33" stroke-width="2.5" fill="none"/></svg>Kuryer<small>Tez orada</small></div><div class="tile"><svg viewBox="0 0 60 48"><path d="M10 40c0-14 14-8 20-16s2-14 20-14" stroke="#0f766e" stroke-width="4" fill="none" stroke-linecap="round" stroke-dasharray="1 8"/><circle cx="10" cy="40" r="6" fill="#ff6a3d"/><circle cx="50" cy="10" r="6" fill="#0c2f33"/></svg>Shaharlararo<small>Tez orada</small></div></div>
 <button class="find" id="findB"><i>🔎</i>Qayerga boramiz?</button>
 <div class="sec" id="rt">Mashhur joylar</div><div id="rl"></div>
-<div class="drv">🚕 <b>Haydovchimisiz?</b> Bizda komissiya atigi <b>7%</b>, dastlabki 3 ta buyurtma komissiyasiz. <a href="/drv.html" style="color:#ff6a3d;font-weight:700;white-space:nowrap">Haydovchi ilovasi →</a></div></div><div id="app">
+<div class="drv">🚕 <b>Haydovchimisiz?</b> Bizda komissiya atigi <b>7%</b>, dastlabki 3 ta buyurtma komissiyasiz. <a href="/drv.html" style="color:#ff6a3d;font-weight:700;white-space:nowrap">Haydovchi ilovasi →</a></div></div><div id="onb"><div class="ob"><div class="obt">Baxu<i>Taksi</i></div><h2>Ro‘yxatdan o‘tish</h2><p>Bir marta kiriting, keyingi buyurtmalarda so‘ralmaydi.</p><label>Ism va familiya</label><input id="on_n" maxlength="40" placeholder="Masalan: Aziz Karimov" autocomplete="name"><label>Telefon raqam</label><input id="on_p" type="tel" inputmode="tel" maxlength="19" placeholder="+998 90 123 45 67" autocomplete="tel"><div id="on_e"></div><button id="on_go">Davom etish</button></div></div><div id="app">
   <div id="map"><button id="back" aria-label="Orqaga">←</button><button id="gps" aria-label="Mening joylashuvim">📍</button></div>
   <div id="sheet">
     <div id="form">
@@ -217,6 +217,17 @@ try{if(TW&&TW.initDataUnsafe&&TW.initDataUnsafe.start_param==='driver'){location
 try{var uu=TW&&TW.initDataUnsafe&&TW.initDataUnsafe.user;if(uu&&uu.first_name)$('#hi').firstChild.textContent='Salom, '+uu.first_name.slice(0,20)+' 👋'}catch(e){}
 var ag=$('#again'),agOld=ag.onclick;ag.onclick=function(){agOld();openHome()};
 window.__saveRec=function(){if(!P.to||!P.to.addr)return;rec=[{addr:P.to.addr,lat:P.to.lat,lng:P.to.lng}].concat(rec.filter(function(r){return r.addr!==P.to.addr})).slice(0,3);try{localStorage.setItem('taxi_rec',JSON.stringify(rec))}catch(e){}};
+
+/* ---- yo'lovchi ro'yxatdan o'tishi (bir marta) ---- */
+function fph(v){var d=String(v||'').replace(/[^0-9]/g,'');if(d.indexOf('998')===0)d=d.slice(3);d=d.slice(0,9);var o='+998';if(d)o+=' '+d.slice(0,2);if(d.length>2)o+=' '+d.slice(2,5);if(d.length>5)o+=' '+d.slice(5,7);if(d.length>7)o+=' '+d.slice(7,9);return d?o:''}
+function applyProfile(p){if(!p)return;$('#nm').value=p.name;$('#ph').value=fph(p.phone);try{localStorage.setItem('taxi_u',JSON.stringify({n:p.name,p:fph(p.phone)}))}catch(e){}chk();try{$('#hi').firstChild.textContent='Salom, '+p.name.split(' ')[0].slice(0,20)+' 👋'}catch(e){}}
+function onbOpen(pre){$('#onb').style.display='flex';$('#on_n').value=pre||'';$('#on_p').value='';}
+$('#on_p').addEventListener('input',function(){this.value=fph(this.value)});
+$('#on_go').onclick=function(){var b=this,er=$('#on_e');er.textContent='';b.disabled=true;
+ fetch('/api/profile',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'save',name:$('#on_n').value,phone:$('#on_p').value,initData:TW&&TW.initData||''})})
+ .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j}})}).then(function(x){b.disabled=false;if(x.ok&&x.j.ok){$('#onb').style.display='none';applyProfile({name:x.j.name,phone:x.j.phone})}else er.textContent=x.j.error||'Xatolik'}).catch(function(){b.disabled=false;er.textContent='Aloqa xatosi'})};
+if(TW&&TW.initData){fetch('/api/profile',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'get',initData:TW.initData})}).then(function(r){return r.json()}).then(function(j){
+ if(j&&j.ok){if(j.profile)applyProfile(j.profile);else{var u0=TW.initDataUnsafe&&TW.initDataUnsafe.user,pre=u0?[u0.first_name,u0.last_name].filter(Boolean).join(' '):'';onbOpen(pre)}}}).catch(function(){})}
 renderHome();
 
 (function(){

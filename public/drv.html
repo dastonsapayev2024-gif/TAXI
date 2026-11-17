@@ -50,7 +50,7 @@ function fd(m){return m>=1000?(m/1000).toFixed(1).replace('.0','')+' km':Math.ro
 function ad(p){return p&&p.addr?esc(String(p.addr).slice(0,70)):'—'}
 function ago(s){return s<20?'hozirgina':s<60?s+' soniya oldin':Math.floor(s/60)+' daq oldin'}
 
-if(navigator.geolocation)try{navigator.geolocation.watchPosition(function(p){pos=[p.coords.latitude,p.coords.longitude]},function(){},{enableHighAccuracy:false,maximumAge:15000,timeout:20000})}catch(e){}
+if(navigator.geolocation)try{navigator.geolocation.watchPosition(function(p){pos=[p.coords.latitude,p.coords.longitude]},function(){},{enableHighAccuracy:true,maximumAge:5000,timeout:20000})}catch(e){}
 
 function head(){var b=$('#bal');b.innerHTML=ME&&ME.registered?'Balans<b>'+F(ME.balance)+' so‘m</b>🎁 bepul: '+ME.free:''}
 
@@ -58,9 +58,11 @@ function render(){head();var h='';
  if(!ME){return}
  if(!ME.registered){
   h+='<div class="c"><h3>🚕 Haydovchi bo‘lish</h3><div class="sub">Komissiya atigi <b>'+ME.cfg.feePct+'%</b>, dastlabki <b>'+ME.cfg.freeOrders+'</b> ta buyurtma komissiyasiz.</div>'+
+     '<div style="margin-top:10px"><b>Ism va familiya</b><input id="fn" maxlength="40" placeholder="Masalan: Aziz Karimov" autocomplete="name" value="'+esc(ME.name||'')+'"></div>'+
+     '<div style="margin-top:6px"><b>Telefon raqam</b><input id="fp" type="tel" inputmode="tel" maxlength="19" placeholder="+998 90 123 45 67" autocomplete="tel" value="'+esc(fphone(ME.phone))+'"></div>'+
      '<div style="margin-top:10px"><b>Mashinangiz</b><div class="sub">Markasi, rangi va davlat raqami. Yo‘lovchi sizni shu bo‘yicha taniydi.</div><input id="car" maxlength="60" placeholder="Cobalt, oq, 01 A 123 BC" autocomplete="off"></div>'+
      '<button class="btn" id="reg">Boshlash</button></div>';
-  $('#app').innerHTML=h;$('#reg').onclick=register;return}
+  $('#app').innerHTML=h;$('#reg').onclick=register;var fpi=$('#fp');fpi.addEventListener('input',function(){this.value=fphone(this.value)});if(ME.car&&$('#car'))$('#car').value=ME.car;return}
  if(ME.blocked){$('#app').innerHTML='<div class="c"><h3>⛔ Hisobingiz bloklangan</h3>Admin bilan bog‘laning.</div>';return}
  var a=ME.active;
  if(a){h+='<div class="c act"><div class="row"><h3>🚕 Joriy buyurtma #'+esc(a.id)+'</h3><span class="tag g">Faol</span></div>'+
@@ -92,7 +94,8 @@ function bind(){
  $('#cb').onclick=function(){$('#ce').style.display='block';this.style.display='none'};
  $('#cs').onclick=function(){api({action:'car',car:$('#car').value}).then(function(){toast('✅ Saqlandi');$('#ce').style.display='none';loadMe()}).catch(function(e){toast(e&&e.error||'Xatolik')})}}
 
-function register(){var b=$('#reg');b.disabled=true;api({action:'register',car:$('#car').value}).then(function(){haptic();return loadMe()}).then(function(){return loadOrders()}).catch(function(e){b.disabled=false;toast(e&&e.error||'Xatolik')})}
+function fphone(v){var d=String(v||'').replace(/\D/g,'');if(d.indexOf('998')===0)d=d.slice(3);d=d.slice(0,9);var o='+998';if(d)o+=' '+d.slice(0,2);if(d.length>2)o+=' '+d.slice(2,5);if(d.length>5)o+=' '+d.slice(5,7);if(d.length>7)o+=' '+d.slice(7,9);return d?o:''}
+function register(){var b=$('#reg');b.disabled=true;api({action:'register',name:$('#fn').value,phone:$('#fp').value,car:$('#car').value}).then(function(){haptic();return loadMe()}).then(function(){return loadOrders()}).catch(function(e){b.disabled=false;toast(e&&e.error||'Xatolik')})}
 function accept(id,btn){if(busy)return;busy=true;btn.disabled=true;
  api({action:'accept',id:id}).then(function(r){busy=false;haptic();toast('✅ Buyurtma sizniki!'+(r.free?' 🎁 Bepul':' Komissiya '+F(r.fee)+' so‘m yechildi'));ORD=ORD.filter(function(o){return o.id!==id});loadMe().then(function(){if(ME&&ME.active)location.href='/driver.html?o='+encodeURIComponent(id)})})
  .catch(function(e){busy=false;btn.disabled=false;haptic('error');toast(e&&e.error||'Xatolik');loadOrders();loadMe()})}
