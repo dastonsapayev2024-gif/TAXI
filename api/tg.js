@@ -194,6 +194,8 @@ module.exports = async (req, res) => {
   if (!same(req.headers['x-telegram-bot-api-secret-token'] || '', secret())) return res.status(401).end();
   const up = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
   try {
+    // Yangi tugmali bot (liniya + oylik obuna). Eski mini-ilova rejimi uchun TAXI_MODE=app qo'ying.
+    if (process.env.TAXI_MODE !== 'app' && await require('./ln').handle(up)) return res.status(200).end();
     if (up.message && up.message.chat && up.message.chat.type === 'private') await onPrivate(up.message);
     else if (up.message && up.message.text && /^\/id(@\w+)?$/.test(up.message.text.trim())) await send(up.message.chat.id, 'Chat ID: ' + up.message.chat.id);
     if (up.callback_query && up.callback_query.data && up.callback_query.message) await onCallback(up.callback_query);

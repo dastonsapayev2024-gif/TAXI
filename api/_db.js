@@ -30,6 +30,32 @@ create table if not exists ledger(
   created timestamptz not null default now());
 create index if not exists orders_driver_idx on orders(driver_id, created desc);
 
+-- ===== Tugmali taksi boti (liniya + oylik obuna) =====
+create table if not exists ln_regions(id serial primary key, parent_id int references ln_regions(id) on delete cascade, name text not null, kind text not null, created timestamptz not null default now());
+create unique index if not exists ln_reg_u on ln_regions((coalesce(parent_id,0)), lower(name));
+create table if not exists ln_drivers(
+  tg_id bigint primary key, name text not null default '', username text not null default '', phone text not null default '', car text not null default '',
+  kind text not null default '', region_id int, paid_until timestamptz, online boolean not null default false, online_at timestamptz,
+  blocked boolean not null default false, created timestamptz not null default now());
+create table if not exists ln_users(tg_id bigint primary key, name text not null default '', phone text not null default '');
+create table if not exists ln_orders(
+  id text primary key, uid bigint not null, pname text not null default '', phone text not null default '', kind text not null, region_id int,
+  to_text text not null default '', addr text not null default '', lat double precision, lng double precision, status text not null default 'new',
+  driver_id bigint, created timestamptz not null default now(), taken_at timestamptz, done_at timestamptz);
+create table if not exists ln_msgs(order_id text not null, chat_id bigint not null, msg_id bigint not null);
+create index if not exists ln_msgs_o on ln_msgs(order_id);
+create table if not exists ln_pay(id serial primary key, driver_id bigint not null, amount bigint not null default 0, status text not null default 'pending', file_id text not null default '', created timestamptz not null default now(), decided timestamptz);
+create table if not exists ln_state(tg_id bigint primary key, st text not null default '', data jsonb not null default '{}', updated timestamptz not null default now());
+do $seed$ declare x int; q int; begin
+  if not exists (select 1 from ln_regions) then
+    insert into ln_regions(parent_id,name,kind) values (null,'Xorazm','viloyat') returning id into x;
+    insert into ln_regions(parent_id,name,kind) values (x,'Qo‘shko‘pir','tuman') returning id into q;
+    insert into ln_regions(parent_id,name,kind) values (q,'O‘rta Qishloq','mahalla');
+    insert into ln_regions(parent_id,name,kind) values (x,'Xiva','tuman');
+    insert into ln_regions(parent_id,name,kind) values (x,'Urganch','tuman');
+  end if;
+end $seed$;
+
 alter table drivers add column if not exists car text not null default '';
 alter table drivers add column if not exists phone text not null default '';
 create table if not exists settings(key text primary key, val text not null, updated timestamptz not null default now());
