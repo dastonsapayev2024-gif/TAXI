@@ -11,6 +11,7 @@ const CFG = {
   freeOrders: 3,     // yangi haydovchiga dastlabki bepul buyurtmalar soni
   minTopup: 20000,   // balansni eng kam to'ldirish (so'm)
   maxTopup: 5000000, // bir martalik eng ko'p to'ldirish (so'm)
+  expireMin: 5,     // buyurtmani hech kim olmasa, necha daqiqadan keyin yopiladi
   cancelMin: 10,     // haydovchi buyurtmani necha daqiqa ichida bekor qila oladi
   maxKm: 80,         // bundan uzoq buyurtma qabul qilinmaydi
   center: [41.3111, 69.2797], // xarita markazi (Toshkent)
@@ -64,4 +65,10 @@ function checkInit(initData) {
   } catch (e) { return null; }
 }
 
-module.exports = { CFG, esc, tg, token, secret, distKm, priceOf, fmt, checkInit };
+// Guruhdagi buyurtma xabarini yopish (tugma o'rniga yozuv qoladi)
+async function closeGroup(msg, label) {
+  const g = String(process.env.GROUP_ID || '').trim();
+  if (!msg || !g) return;
+  try { await tg('editMessageReplyMarkup', { chat_id: g, message_id: Number(msg), reply_markup: { inline_keyboard: [[{ text: label, callback_data: 'x' }]] } }); } catch (e) { /* e'tiborsiz */ }
+}
+module.exports = { CFG, esc, tg, token, secret, distKm, priceOf, fmt, checkInit, closeGroup };

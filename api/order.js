@@ -1,6 +1,7 @@
 'use strict';
 const { CFG, esc, tg, distKm, priceOf, fmt, checkInit } = require('./_lib');
 const db = require('./_db');
+const crypto = require('crypto');
 
 const last = new Map(); // oddiy spamdan himoya (bir telefon: 60 soniyada 1 buyurtma)
 const num = v => typeof v === 'number' && isFinite(v);
@@ -62,8 +63,9 @@ module.exports = async (req, res) => {
       '💼 Komissiya (' + CFG.feePct + '%): ' + fmt(fee) + ' so‘m · Sizga: ' + fmt(price - fee) + ' so‘m' +
       (note ? '\n🗒 ' + esc(note) : '') + '\n\n' +
       '👤 ' + esc(name) + ' · telefon qabul qilgach ko‘rinadi';
-    await db.q('insert into orders(id,uid,phone,name,fromp,top,km,price,fee) values($1,$2,$3,$4,$5,$6,$7,$8,$9)',
-      [id, uid, phone.slice(3), name, JSON.stringify(from), JSON.stringify(to), km, price, fee]);
+    const tokn = crypto.randomBytes(9).toString('base64url');
+    await db.q('insert into orders(id,uid,phone,name,fromp,top,km,price,fee,token) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+      [id, uid, phone.slice(3), name, JSON.stringify(from), JSON.stringify(to), km, price, fee, tokn]);
     const r = await tg('sendMessage', {
       chat_id: group, text, parse_mode: 'HTML', disable_web_page_preview: true,
       reply_markup: { inline_keyboard: [
@@ -72,7 +74,8 @@ module.exports = async (req, res) => {
       ] }
     });
     if (!r || !r.ok) { await db.q("update orders set status='failed' where id=$1", [id]).catch(() => {}); return res.status(502).json({ error: 'Buyurtma yuborilmadi. Keyinroq urinib ko‘ring' }); }
-    return res.status(200).json({ ok: true, id, price, km });
+    if (r.result && r.result.message_id) await db.q('update orders set tg_msg=$1 where id=$2', [r.result.message_id, id]).catch(() => {});
+    return res.status(200).json({ ok: true, id, token: tokn, price, km, expire: CFG.expireMin * 60 });
   } catch (e) {
     return res.status(500).json({ error: 'Server xatosi' });
   }

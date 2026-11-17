@@ -1,6 +1,6 @@
 'use strict';
 const crypto = require('crypto');
-const { CFG, esc, tg, secret, fmt } = require('./_lib');
+const { CFG, esc, tg, secret, fmt, closeGroup } = require('./_lib');
 const db = require('./_db');
 
 const same = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); };
@@ -10,10 +10,11 @@ const isAdmin = id => !!process.env.ADMIN_ID && String(id) === String(process.en
 let botName = '';
 async function bot() { if (!botName) { const r = await tg('getMe', {}); botName = r && r.result ? r.result.username : ''; } return botName; }
 
-const MENU = { keyboard: [[{ text: '💰 Balans' }, { text: '➕ To‘ldirish' }], [{ text: '📋 Buyurtmalarim' }, { text: 'ℹ️ Yordam' }]], resize_keyboard: true };
+const MENU = { keyboard: [[{ text: '💰 Balans' }, { text: '➕ To‘ldirish' }], [{ text: '📋 Buyurtmalarim' }, { text: '🚗 Mashinam' }], [{ text: 'ℹ️ Yordam' }]], resize_keyboard: true };
 const send = (chat, text, extra) => tg('sendMessage', Object.assign({ chat_id: chat, text, parse_mode: 'HTML', disable_web_page_preview: true }, extra || {}));
 const alert_ = (q, text) => tg('answerCallbackQuery', { callback_query_id: q.id, text: String(text).slice(0, 190), show_alert: true });
 
+const CAR_ASK = '🚗 Mashinangiz ma‘lumotini <b>bitta xabarda</b> yozing: markasi, rangi va davlat raqami.\nMasalan: <code>Cobalt, oq, 01 A 123 BC</code>\n\nYo‘lovchi sizni shu bo‘yicha taniydi.';
 async function driverOf(id) { const r = await db.q('select * from drivers where tg_id=$1', [id]); return r.rows[0] || null; }
 
 function rowsKeep(q) { // xabardagi "Yo'nalish" (url) tugmasini saqlab qolamiz
@@ -38,10 +39,12 @@ async function onPrivate(m) {
         '💼 Komissiya: faqat <b>' + CFG.feePct + '%</b> (boshqa xizmatlardan arzon)\n' +
         '🎁 Dastlabki <b>' + d.free_left + '</b> buyurtma komissiyasiz\n' +
         '💰 Balansingiz: <b>' + fmt(d.balance) + ' so‘m</b>\n\n' +
-        'Buyurtmalar haydovchilar guruhiga tushadi. «✅ Qabul qilaman» ni bosing: raqam sizga ko‘rinadi, komissiya balansdan yechiladi. Noto‘g‘ri buyurtmani ' + CFG.cancelMin + ' daqiqa ichida bekor qilsangiz, komissiya qaytadi.', { reply_markup: MENU });
+        'Buyurtmalar haydovchilar guruhiga tushadi. «✅ Qabul qilaman» ni bosing: raqam sizga ko‘rinadi, komissiya balansdan yechiladi. Noto‘g‘ri buyurtmani ' + CFG.cancelMin + ' daqiqa ichida bekor qilsangiz, komissiya qaytadi.', { reply_markup: MENU }).then(async () => {
+        if (!d.car) { await db.q("update drivers set state='car' where tg_id=$1", [from.id]); await send(chat, CAR_ASK); }
+      });
     }
     const app = String(process.env.APP_LINK || '').trim();
-    return send(chat, '🚕 Taksi buyurtma qilish uchun pastdagi tugmani bosing.\n\nHaydovchi bo‘lmoqchimisiz? /start driver deb yozing.',
+    return send(chat, '🚕 <b>Baxu Taksi</b>\n\nTaksi buyurtma qilish uchun pastdagi tugmani bosing.\n\nHaydovchi bo‘lmoqchimisiz? /start driver deb yozing.',
       app ? { reply_markup: { inline_keyboard: [[{ text: '🚕 Taksi chaqirish', url: app }]] } } : {});
   }
   if (/^\/id(@\w+)?$/.test(t)) return send(chat, 'Chat ID: ' + chat);
@@ -72,6 +75,16 @@ async function onPrivate(m) {
   if (!d) return send(chat, 'Haydovchi sifatida ro‘yxatdan o‘tish uchun /start driver deb yozing.');
   if (d.blocked) return send(chat, '⛔ Hisobingiz bloklangan. Admin bilan bog‘laning.');
 
+  if (d.state === 'car' && t && !t.startsWith('/') && !/^(💰|➕|📋|ℹ️|🚗)/.test(t)) {
+    const c = t.replace(/\s+/g, ' ').slice(0, 60);
+    if (c.length < 5) return send(chat, 'Juda qisqa. Masalan: <code>Cobalt, oq, 01 A 123 BC</code>');
+    await db.q("update drivers set car=$1, state='' where tg_id=$2", [c, from.id]);
+    return send(chat, '✅ Saqlandi: <b>' + esc(c) + '</b>\nEndi buyurtmalarni qabul qila olasiz.', { reply_markup: MENU });
+  }
+  if (/^(🚗 Mashinam|\/mashina)$/i.test(t)) {
+    await db.q("update drivers set state='car' where tg_id=$1", [from.id]);
+    return send(chat, (d.car ? 'Hozirgi: <b>' + esc(d.car) + '</b>\n\n' : '') + CAR_ASK);
+  }
   if (m.photo && d.state === 'chek') {
     const fid = m.photo[m.photo.length - 1].file_id;
     const r = await db.q('insert into topups(driver_id,amount,file_id) values($1,$2,$3) returning id', [from.id, d.state_n, fid]);
@@ -121,13 +134,17 @@ async function onCallback(q) {
   const id = d[1];
 
   if (d[0] === 'a') {
-    const r = await db.fn('accept_order', id, from.id);
+    const r = await db.fn('accept_order', id, from.id, CFG.expireMin);
+    if (r.err === 'expired') { await closeGroup(r.msg, '⌛ Muddati o‘tdi'); return alert_(q, 'Buyurtma muddati o‘tdi (' + CFG.expireMin + ' daqiqa). Yo‘lovchi qayta buyurtma berishi mumkin.'); }
+    if (r.err === 'gone') { await closeGroup(q.message.message_id, '❌ Bekor qilingan'); return alert_(q, 'Bu buyurtma bekor qilingan'); }
+    if (r.err === 'nocar') return alert_(q, 'Avval mashina ma‘lumotini kiriting: botga o‘tib «🚗 Mashinam» ni bosing.');
     if (r.err === 'taken' || r.err === 'noorder') return alert_(q, 'Bu buyurtmani boshqa haydovchi oldi');
     if (r.err === 'nodriver') { const bn = await bot(); return alert_(q, 'Avval haydovchi sifatida ro‘yxatdan o‘ting: @' + bn + ' ga o‘tib /start driver yozing.'); }
     if (r.err === 'balance') return alert_(q, 'Balans yetarli emas. Kerak: ' + fmt(r.need) + ' so‘m, sizda: ' + fmt(r.bal) + ' so‘m. Botga o‘tib «➕ To‘ldirish» ni bosing.');
     await tg('editMessageReplyMarkup', { chat_id: chat, message_id: mid, reply_markup: takenKb(id, nameOf(from), rowsKeep(q)) });
     await alert_(q, '✅ Buyurtma sizniki!\n📞 +998' + r.phone + '\n' + (r.free ? '🎁 Bepul buyurtma (qolgan: ' + r.left + ')' : '💼 Komissiya: ' + fmt(r.fee) + ' so‘m yechildi') + '\n💰 Balans: ' + fmt(r.bal) + ' so‘m');
-    if (+r.uid > 0) await send(+r.uid, '🚕 Haydovchi topildi: <b>' + who(from) + '</b>\nBuyurtma #' + esc(id) + '. Tez orada siz bilan bog‘lanadi.').catch(() => {});
+    await send(from.id, '🧭 Yo‘lovchiga borish uchun navigatsiyani oching (xarita, yo‘nalish, yo‘lovchi sizni jonli ko‘radi):', { reply_markup: { inline_keyboard: [[{ text: '🧭 Navigatsiya', web_app: { url: BASE + '/driver.html?o=' + id } }]] } }).catch(() => {});
+    if (+r.uid > 0) await send(+r.uid, '🚕 Haydovchi topildi: <b>' + who(from) + '</b>\n🚗 ' + esc(r.car || '') + '\nBuyurtma #' + esc(id) + '. Tez orada siz bilan bog‘lanadi.').catch(() => {});
     return;
   }
   if (d[0] === 'p') {
@@ -150,8 +167,10 @@ async function onCallback(q) {
   return tg('answerCallbackQuery', { callback_query_id: q.id });
 }
 
+let BASE = '';
 module.exports = async (req, res) => {
   res.setHeader('cache-control', 'no-store');
+  BASE = String(process.env.APP_URL || '').trim().replace(/\/$/, '') || (req.headers && req.headers.host ? 'https://' + req.headers.host : '');
   if (req.method === 'GET') { // bir martalik o'rnatish: /api/tg?setup=SETUP_KEY
     const key = String((req.query && req.query.setup) || ''), want = String(process.env.SETUP_KEY || '');
     if (!want || !key || !same(key, want)) return res.status(403).send('Ruxsat yo‘q');
@@ -169,6 +188,6 @@ module.exports = async (req, res) => {
     if (up.message && up.message.chat && up.message.chat.type === 'private') await onPrivate(up.message);
     else if (up.message && up.message.text && /^\/id(@\w+)?$/.test(up.message.text.trim())) await send(up.message.chat.id, 'Chat ID: ' + up.message.chat.id);
     if (up.callback_query && up.callback_query.data && up.callback_query.message) await onCallback(up.callback_query);
-  } catch (e) { /* Telegram qayta yubormasligi uchun 200 qaytaramiz */ }
+  } catch (e) { if (process.env.TEST_DBG) console.log('TGERR', e.message); /* Telegram qayta yubormasligi uchun 200 qaytaramiz */ }
   return res.status(200).end();
 };

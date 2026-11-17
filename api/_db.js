@@ -30,21 +30,62 @@ create table if not exists ledger(
   created timestamptz not null default now());
 create index if not exists orders_driver_idx on orders(driver_id, created desc);
 
-create or replace function accept_order(p_oid text, p_did bigint) returns json language plpgsql as $fn$
+alter table drivers add column if not exists car text not null default '';
+alter table orders add column if not exists token text not null default '';
+alter table orders add column if not exists tg_msg bigint;
+alter table orders add column if not exists dlat double precision;
+alter table orders add column if not exists dlng double precision;
+alter table orders add column if not exists dts timestamptz;
+drop function if exists accept_order(text, bigint);
+
+create or replace function accept_order(p_oid text, p_did bigint, p_exp int) returns json language plpgsql as $fn$
 declare o orders; d drivers; f int; fr boolean;
 begin
   select * into o from orders where id = p_oid for update;
   if not found then return json_build_object('err','noorder'); end if;
+  if o.status = 'new' and o.created < now() - make_interval(mins => p_exp) then
+    update orders set status='expired' where id = p_oid;
+    return json_build_object('err','expired','msg',o.tg_msg);
+  end if;
+  if o.status in ('cancelled','expired') then return json_build_object('err','gone'); end if;
   if o.status <> 'new' then return json_build_object('err','taken'); end if;
   select * into d from drivers where tg_id = p_did for update;
   if not found or d.blocked then return json_build_object('err','nodriver'); end if;
+  if d.car = '' then return json_build_object('err','nocar'); end if;
   fr := d.free_left > 0;
   f := case when fr then 0 else o.fee end;
   if d.balance < f then return json_build_object('err','balance','need',f,'bal',d.balance); end if;
   update drivers set balance = balance - f, free_left = free_left - (case when fr then 1 else 0 end) where tg_id = p_did;
   update orders set status='taken', driver_id=p_did, fee_paid=f, free_used=fr, taken_at=now() where id = p_oid;
   if f > 0 then insert into ledger(driver_id, delta, kind, ref) values (p_did, -f, 'fee', p_oid); end if;
-  return json_build_object('ok',true,'phone',o.phone,'uid',o.uid,'fee',f,'free',fr,'bal',d.balance - f,'left',d.free_left - (case when fr then 1 else 0 end));
+  return json_build_object('ok',true,'phone',o.phone,'uid',o.uid,'fee',f,'free',fr,'bal',d.balance - f,'left',d.free_left - (case when fr then 1 else 0 end),'car',d.car,'uname',d.username);
+end $fn$;
+
+create or replace function cancel_by_passenger(p_oid text, p_token text) returns json language plpgsql as $fn$
+declare o orders;
+begin
+  select * into o from orders where id = p_oid for update;
+  if not found or o.token = '' or o.token <> p_token then return json_build_object('err','noorder'); end if;
+  if o.status = 'done' then return json_build_object('err','done'); end if;
+  if o.status in ('cancelled','expired','failed') then return json_build_object('err','already'); end if;
+  if o.status = 'taken' then
+    update drivers set balance = balance + o.fee_paid, free_left = free_left + (case when o.free_used then 1 else 0 end) where tg_id = o.driver_id;
+    if o.fee_paid > 0 then insert into ledger(driver_id, delta, kind, ref) values (o.driver_id, o.fee_paid, 'refund', p_oid); end if;
+  end if;
+  update orders set status='cancelled' where id = p_oid;
+  return json_build_object('ok',true,'was',o.status,'driver',o.driver_id,'msg',o.tg_msg,'refund',o.fee_paid);
+end $fn$;
+
+create or replace function expire_if_old(p_oid text, p_exp int) returns json language plpgsql as $fn$
+declare o orders;
+begin
+  select * into o from orders where id = p_oid for update;
+  if not found then return json_build_object('changed',false); end if;
+  if o.status = 'new' and o.created < now() - make_interval(mins => p_exp) then
+    update orders set status='expired' where id = p_oid;
+    return json_build_object('changed',true,'msg',o.tg_msg);
+  end if;
+  return json_build_object('changed',false);
 end $fn$;
 
 create or replace function cancel_order(p_oid text, p_did bigint, p_min int) returns json language plpgsql as $fn$
