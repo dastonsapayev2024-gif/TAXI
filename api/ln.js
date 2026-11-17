@@ -62,20 +62,29 @@ const HEAD = {
   dm: '🚕 <b>Qaysi mahallada ishlaysiz?</b>', dv: '🚕 <b>Qaysi tumandan ishlaysiz?</b>'
 };
 async function regScreen(mode, nodeId) {
+  // mahalla taksisi: faqat ishlaydigan hududlar; bitta viloyat bo'lsa to'g'ri o'shandan boshlanadi
+  const local = mode === 'tm' || mode === 'fm' || mode === 'dm';
+  let solo = false;
+  if (local && !nodeId) {
+    const act = (await kids(null)).filter(k => k.active);
+    if (act.length === 1) { nodeId = act[0].id; solo = true; }
+  }
   const node = nodeId ? await reg(nodeId) : null, list = await kids(nodeId || null), rows = [];
+  if (local && node && node.kind === 'viloyat' && !node.parent_id) { const act = (await kids(null)).filter(k => k.active); solo = act.length === 1; }
   for (const k of list) {
+    if (local && !k.active) continue;
     if (TUMAN_ONLY(mode) && k.kind === 'mahalla') continue;
     if (!k.active) { rows.push([{ text: '🕓 ' + k.name, callback_data: 'ia:0' }]); continue; }
     const deep = k.kind === 'viloyat' || (!TUMAN_ONLY(mode) && k.kind === 'tuman' && (await kids(k.id)).length > 0);
     rows.push([{ text: k.name + (deep ? ' ›' : ''), callback_data: (deep ? 'rg:' : 'rs:') + mode + ':' + k.id }]);
   }
   if (node && node.kind === 'tuman' && !TUMAN_ONLY(mode)) rows.push([{ text: '✅ Butun ' + node.name, callback_data: 'rs:' + mode + ':' + node.id }]);
-  if (node) rows.push([{ text: '⬅️ Orqaga', callback_data: 'rg:' + mode + ':' + (node.parent_id || 0) }]);
+  if (node && !(solo && node.kind === 'viloyat')) rows.push([{ text: '⬅️ Orqaga', callback_data: 'rg:' + mode + ':' + (node.parent_id || 0) }]);
   let hint;
   if (!node) hint = 'Viloyatni tanlang:';
   else if (node.kind === 'viloyat' || TUMAN_ONLY(mode)) hint = 'Tumanni tanlang:';
   else hint = 'Mahallani tanlang yoki «Butun ' + esc(node.name) + '» ni bosing:';
-  const text = HEAD[mode] + (node ? '\n📍 ' + esc(await pathName(node.id)) : '') + '\n\n' + hint + (list.some(k => !k.active) ? '\n<i>🕓 — tez kunda ishga tushadi</i>' : '');
+  const text = HEAD[mode] + (node && !(solo && node.kind === 'viloyat' && local) ? '\n📍 ' + esc(await pathName(node.id)) : '') + '\n\n' + hint + (list.some(k => !k.active) ? '\n<i>🕓 — tez kunda ishga tushadi</i>' : '');
   return { text: list.length ? text : HEAD[mode] + '\n\nBu yerda hududlar hali qo‘shilmagan. Tez kunda ishga tushadi.', kb: { inline_keyboard: rows } };
 }
 
