@@ -53,11 +53,12 @@ do $seed$ declare x int; q int; begin
   if not exists (select 1 from ln_regions) then
     insert into ln_regions(parent_id,name,kind) values (null,'Xorazm','viloyat') returning id into x;
     insert into ln_regions(parent_id,name,kind) values (x,'Qo‘shko‘pir','tuman') returning id into q;
-    insert into ln_regions(parent_id,name,kind) values (q,'O‘rta Qishloq','mahalla');
+    insert into ln_regions(parent_id,name,kind) values (q,'O‘rta Qishloq (Nezaxos)','mahalla');
     insert into ln_regions(parent_id,name,kind) values (x,'Xiva','tuman');
     insert into ln_regions(parent_id,name,kind) values (x,'Urganch','tuman');
   end if;
 end $seed$;
+update ln_regions set name='O‘rta Qishloq (Nezaxos)' where name='O‘rta Qishloq' and kind='mahalla';
 insert into ln_regions(parent_id,name,kind,active) select null, v, 'viloyat', false from unnest(array['Toshkent shahri','Toshkent viloyati','Samarqand','Buxoro','Navoiy','Qashqadaryo','Surxondaryo','Jizzax','Sirdaryo','Farg‘ona','Andijon','Namangan','Qoraqalpog‘iston']) as v on conflict do nothing;
 
 alter table drivers add column if not exists car text not null default '';

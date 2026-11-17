@@ -56,7 +56,7 @@ async function pathName(id) {
   return parts.join(' › ');
 }
 // mode: tm/fm (mahalla taksi: qayerga/qayerdan), pt/pf (viloyat taksi: qayerga/qayerdan), dm/dv (haydovchi: mahalla/viloyat)
-const TUMAN_ONLY = m => m === 'tm' || m === 'pf' || m === 'pt' || m === 'dv';
+const TUMAN_ONLY = m => m === 'pf' || m === 'pt' || m === 'dv';
 const HEAD = {
   tm: '🏁 <b>Qayerga borasiz?</b>', fm: '📍 <b>Qayerdan yo‘lga chiqasiz?</b>', pt: '🏁 <b>Qayerga borasiz?</b>', pf: '📍 <b>Qayerdan yo‘lga chiqasiz?</b>',
   dm: '🚕 <b>Qaysi mahallada ishlaysiz?</b>', dv: '🚕 <b>Qaysi tumandan ishlaysiz?</b>'
