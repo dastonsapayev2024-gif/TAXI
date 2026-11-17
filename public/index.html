@@ -327,6 +327,8 @@ window.__track=function(j){hideCar();watchMe(true);CFGEXP=j.expire||300;ORD={id:
 $('#cx').onclick=function(){if(!ORD)return;if(!sure){sure=1;draw();setTimeout(function(){sure=0;draw()},4000);return}
  sure=0;var b=this;b.disabled=true;fetch('/api/status',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'cancel',id:ORD.id,t:ORD.t})}).then(function(r){return r.json()}).then(function(j){b.disabled=false;if(j.ok){ORD.s='cancelled';draw()}else{$('#st').innerHTML='⚠️ '+e(j.error||'Bekor qilib bo‘lmadi');pull()}}).catch(function(){b.disabled=false;$('#st').innerHTML='⚠️ Internet yo‘q. Qayta urinib ko‘ring'})};
 })();
+
+fetch('/api/order').then(function(r){return r.json()}).then(function(c){if(c&&c.perKm){CFG.base=c.base;CFG.perKm=c.perKm;CFG.min=c.min;if(c.round)CFG.round=c.round;if(typeof route!=='undefined'&&route&&$('#pr')&&route.km<=CFG.maxKm){$('#pr').textContent=fmt(priceOf(route.km))+' so‘m'}try{chk()}catch(e){}}}).catch(function(){});
 chk();
 })();
 </script></body></html>
