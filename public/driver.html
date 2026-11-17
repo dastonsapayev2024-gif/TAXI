@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="uz"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>Baxu Taksi · Navigatsiya</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#eef1f5;color:#14202e}
+#map{position:fixed;inset:0}
+#top{position:fixed;left:10px;right:10px;top:calc(10px + env(safe-area-inset-top,0px));z-index:1000;background:#0c2f33;color:#fff;border-radius:16px;padding:12px 14px;display:flex;gap:12px;align-items:center;box-shadow:0 6px 20px rgba(0,0,0,.25)}
+#ar{font-size:34px;line-height:1;width:44px;text-align:center}
+#tx{flex:1;min-width:0}#tx b{display:block;font-size:18px;line-height:1.25}#tx small{opacity:.8;font-size:13px}
+#snd{border:0;background:#ffffff22;color:#fff;border-radius:12px;width:42px;height:42px;font-size:20px}
+#bot{position:fixed;left:0;right:0;bottom:0;z-index:1000;background:#fff;border-radius:20px 20px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom,0px));box-shadow:0 -6px 24px rgba(0,0,0,.15)}
+#bot .r{display:flex;justify-content:space-between;align-items:center;gap:10px}
+#who{font-weight:700;font-size:16px}#sub{color:#5b6b7e;font-size:13px;margin-top:2px}
+.b{border:0;border-radius:14px;padding:13px;font-size:16px;font-weight:700;width:100%;margin-top:10px;background:#ff6a3d;color:#fff}
+.b.g{background:#43a047}.b.l{background:#eef1f5;color:#14202e}
+.row2{display:flex;gap:8px}.row2 .b{margin-top:8px}
+a.b{display:block;text-align:center;text-decoration:none}
+#msg{position:fixed;inset:0;z-index:2000;background:#eef1f5;display:none;align-items:center;justify-content:center;text-align:center;padding:30px;font-size:17px;line-height:1.5}
+.car{width:34px;height:34px;border-radius:50%;background:#ff6a3d;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;font-size:18px}
+.pin{width:30px;height:30px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.4)}.pin span{display:block;transform:rotate(45deg);color:#fff;font-weight:800;font-size:13px;text-align:center;line-height:26px}
+</style></head><body>
+<div id="map"></div>
+<div id="top"><div id="ar">🧭</div><div id="tx"><b id="ti">Joylashuv aniqlanmoqda...</b><small id="ts">GPS ni yoqing va ruxsat bering</small></div><button id="snd" title="Ovoz">🔊</button></div>
+<div id="bot">
+  <div class="r"><div><div id="who">Yo‘lovchi</div><div id="sub"></div></div><div id="eta" style="text-align:right;font-weight:700"></div></div>
+  <div class="row2"><a class="b l" id="call" href="#">📞 Qo‘ng‘iroq</a><a class="b l" id="ya" href="#" target="_blank" rel="noopener">🗺 Yandex</a></div>
+  <button class="b" id="st">✅ Yo‘lovchi mashinada</button>
+</div>
+<div id="msg"></div>
+<script>
+(function(){
+'use strict';
+var TW=window.Telegram&&Telegram.WebApp;try{TW&&(TW.ready(),TW.expand())}catch(e){}
+var $=function(s){return document.querySelector(s)};
+var oid=(new URLSearchParams(location.search).get('o')||'').replace(/[^A-Za-z0-9]/g,'').slice(0,12);
+var INIT=TW&&TW.initData||'';
+function fatal(t){var m=$('#msg');m.style.display='flex';m.textContent=t}
+function post(b){b.id=oid;b.initData=INIT;return fetch('/api/loc',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)}).then(function(r){return r.json().then(function(j){j._s=r.status;return j})})}
+if(!oid||!INIT)return fatal('Bu sahifani botdagi «🧭 Navigatsiya» tugmasi orqali oching.');
+
+var map=L.map('map',{zoomControl:false,attributionControl:true}).setView([41.3111,69.2797],14);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+var O=null,stage=0,me=null,meMk=null,tgMk=null,line=null,R=null,stepI=0,lastRoute=0,lastSend=0,voice=true,said={},follow=true,routing=false,fitted=false;
+try{stage=+localStorage.getItem('drv_st_'+oid)||0}catch(e){}
+
+function km(a,b){var R_=6371000,r=Math.PI/180,dl=(b[0]-a[0])*r,dn=(b[1]-a[1])*r,x=Math.sin(dl/2)*Math.sin(dl/2)+Math.cos(a[0]*r)*Math.cos(b[0]*r)*Math.sin(dn/2)*Math.sin(dn/2);return 2*R_*Math.asin(Math.sqrt(x))}
+function offRoute(p,pts){var best=1e9,k=Math.cos(p[0]*Math.PI/180),px=p[1]*k,py=p[0];
+ for(var i=1;i<pts.length;i++){var ax=pts[i-1][1]*k,ay=pts[i-1][0],bx=pts[i][1]*k,by=pts[i][0],dx=bx-ax,dy=by-ay,l=dx*dx+dy*dy,t=l?Math.max(0,Math.min(1,((px-ax)*dx+(py-ay)*dy)/l)):0,qx=ax+t*dx,qy=ay+t*dy;
+  var d=km([py,px/k],[qy,qx/k]);if(d<best)best=d}return best}
+function fmtD(m){return m>=1000?(m/1000).toFixed(1).replace('.0','')+' km':Math.round(m/10)*10+' m'}
+function fmtT(s){var m=Math.round(s/60);return m<1?'1 daq':m+' daq'}
+
+var UZ={left:'chapga buriling','slight left':'chapga biroz buriling','sharp left':'chapga keskin buriling',right:'o‘ngga buriling','slight right':'o‘ngga biroz buriling','sharp right':'o‘ngga keskin buriling',straight:'to‘g‘ri yuring',uturn:'orqaga burilib oling'};
+var RU={left:'налево','slight left':'левее','sharp left':'резко налево',right:'направо','slight right':'правее','sharp right':'резко направо',straight:'прямо',uturn:'развернитесь'};
+var AR={left:'⬅️','slight left':'↖️','sharp left':'↙️',right:'➡️','slight right':'↗️','sharp right':'↘️',straight:'⬆️',uturn:'↩️'};
+function stepText(s){var t=s.maneuver.type,m=s.maneuver.modifier||'straight',nm=s.name||'';
+ if(t==='arrive')return{ar:'🏁',uz:'Manzilga yetdingiz',ru:'Вы прибыли'};
+ if(t==='depart')return{ar:'⬆️',uz:'Yo‘lga chiqing'+(nm?': '+nm:''),ru:'Начните движение'};
+ if(t==='roundabout'||t==='rotary'||t==='roundabout turn')return{ar:'🔄',uz:'Aylanadan chiqing'+(s.maneuver.exit?' ('+s.maneuver.exit+'-chiqish)':''),ru:'На круге съезд '+(s.maneuver.exit||'')};
+ var u=UZ[m]||UZ.straight;if(t==='continue'||t==='new name')u=UZ.straight;
+ return{ar:AR[m]||'⬆️',uz:u.charAt(0).toUpperCase()+u.slice(1)+(nm?' · '+nm:''),ru:(t==='continue'||t==='new name')?'Продолжайте прямо':'Поверните '+(RU[m]||RU.straight)}}
+function speak(t){if(!voice||!window.speechSynthesis)return;try{var u=new SpeechSynthesisUtterance(t);u.lang='ru-RU';u.rate=1;speechSynthesis.cancel();speechSynthesis.speak(u)}catch(e){}}
+$('#snd').onclick=function(){voice=!voice;this.textContent=voice?'🔊':'🔇';if(!voice&&window.speechSynthesis)try{speechSynthesis.cancel()}catch(e){}};
+
+function target(){return stage===0?[O.from.lat,O.from.lng]:[O.to.lat,O.to.lng]}
+function drawTarget(){var t=target();var ic=L.divIcon({className:'',html:'<div class="pin" style="background:'+(stage?'#e53935':'#2e9e4f')+'"><span>'+(stage?'B':'A')+'</span></div>',iconSize:[30,30],iconAnchor:[15,30]});
+ if(tgMk){tgMk.setLatLng(t);tgMk.setIcon&&tgMk.setIcon(ic)}else tgMk=L.marker(t,{icon:ic}).addTo(map);
+ $('#who').textContent=stage?'Manzil: '+(O.to.addr||'B nuqta'):'Yo‘lovchi: '+(O.name||'');
+ $('#sub').textContent=stage?'Yo‘lovchini olib boryapsiz':(O.from.addr||'A nuqta');
+ $('#st').textContent=stage?'🏁 Safar tugadi':'✅ Yo‘lovchi mashinada';$('#st').className='b'+(stage?' g':'');
+ $('#ya').href='https://yandex.com/maps/?rtext='+(me?me[0]+','+me[1]:'')+'~'+t[0]+','+t[1]+'&rtt=auto'}
+
+function route(){if(!me||!O||routing)return;routing=true;lastRoute=Date.now();var t=target();
+ fetch('https://router.project-osrm.org/route/v1/driving/'+me[1]+','+me[0]+';'+t[1]+','+t[0]+'?overview=full&geometries=geojson&steps=true').then(function(r){return r.ok?r.json():Promise.reject()}).then(function(j){
+  routing=false;if(!j.routes||!j.routes[0])throw 0;var r=j.routes[0];var pts=r.geometry.coordinates.map(function(c){return[c[1],c[0]]});
+  var st=[];r.legs[0].steps.forEach(function(s){st.push(s)});R={pts:pts,steps:st,dist:r.distance,dur:r.duration};stepI=0;said={};
+  if(line)line.setLatLngs(pts);else line=L.polyline(pts,{color:'#1976d2',weight:6,opacity:.9}).addTo(map);
+  if(map.fitBounds&&!fitted){fitted=true;try{map.fitBounds(L.latLngBounds(pts.concat([me])),{padding:[80,200]})}catch(e){}}update()}).catch(function(){routing=false;$('#ti').textContent='Yo‘l topilmadi';$('#ts').textContent='Yandex tugmasidan foydalaning'})}
+
+function update(){if(!R||!me)return;
+ var rem=0;
+ // keyingi burilish: me'ga eng yaqin va hali o'tilmagan qadam
+ while(stepI<R.steps.length-1&&km(me,[R.steps[stepI].maneuver.location[1],R.steps[stepI].maneuver.location[0]])<25)stepI++;
+ var nx=R.steps[Math.min(stepI+(stepI===0&&R.steps.length>1?1:0),R.steps.length-1)];
+ var loc=[nx.maneuver.location[1],nx.maneuver.location[0]],d=km(me,loc),tx=stepText(nx);
+ $('#ar').textContent=tx.ar;$('#ti').textContent=tx.uz;$('#ts').textContent=(nx.maneuver.type==='arrive'?'':'Qoldi: ')+fmtD(d);
+ var k=stepI+':';if(d<=180&&!said[k+'a']&&nx.maneuver.type!=='arrive'){said[k+'a']=1;speak('Через '+Math.round(d/10)*10+' метров. '+tx.ru)}
+ if(d<=40&&!said[k+'b']){said[k+'b']=1;speak(tx.ru)}
+ var toT=km(me,target());$('#eta').textContent=fmtD(toT)+' · '+fmtT(R.dur*Math.min(1,toT/Math.max(R.dist,1)));
+ if(stage===0&&toT<40&&!said.near){said.near=1;speak('Вы прибыли к пассажиру');$('#ti').textContent='Yo‘lovchi yonidasiz'}}
+
+function onPos(p){me=[p.coords.latitude,p.coords.longitude];
+ if(meMk)meMk.setLatLng(me);else meMk=L.marker(me,{icon:L.divIcon({className:'',html:'<div class="car">🚕</div>',iconSize:[34,34],iconAnchor:[17,17]})}).addTo(map);
+ if(follow&&R&&map.panTo)try{map.panTo(me)}catch(e){}
+ var now=Date.now();
+ if(!R||now-lastRoute>60000||(R&&offRoute(me,R.pts)>60&&now-lastRoute>8000))route();else update();
+ if(now-lastSend>4000){lastSend=now;post({action:'pos',lat:me[0],lng:me[1]}).then(function(j){if(j&&j.status&&j.status!=='taken')ended(j.status)}).catch(function(){})}}
+function onErr(e){$('#ti').textContent='GPS ishlamayapti';$('#ts').textContent=e&&e.code===1?'Telefon sozlamalarida joylashuvga ruxsat bering':'Ochiq joyga chiqing yoki GPS ni yoqing'}
+function ended(s){navigator.geolocation&&navigator.geolocation.clearWatch&&wid!=null&&navigator.geolocation.clearWatch(wid);fatal(s==='cancelled'?'❌ Yo‘lovchi buyurtmani bekor qildi.\nKomissiya balansingizga qaytarildi.':s==='done'?'🏁 Safar yakunlandi. Rahmat!':'Buyurtma yopilgan.')}
+
+var wid=null;
+$('#st').onclick=function(){
+ if(!stage){stage=1;try{localStorage.setItem('drv_st_'+oid,'1')}catch(e){}R=null;drawTarget();if(me)route();return}
+ var b=this;b.disabled=true;post({action:'done'}).then(function(j){if(j.ok)ended('done');else{b.disabled=false;fatal(j.error||'Xatolik')}}).catch(function(){b.disabled=false;$('#ts').textContent='Internet yo‘q, qayta bosing'})};
+map.on&&map.on('dragstart',function(){follow=false;setTimeout(function(){follow=true},15000)});
+
+post({action:'info'}).then(function(j){
+ if(!j.ok)return fatal(j.error||'Buyurtma topilmadi');
+ if(j.status!=='taken')return ended(j.status);
+ O=j;$('#call').href='tel:+998'+String(j.phone).replace(/\D/g,'');drawTarget();
+ if(!navigator.geolocation)return onErr();
+ wid=navigator.geolocation.watchPosition(onPos,onErr,{enableHighAccuracy:true,maximumAge:2000,timeout:20000})
+}).catch(function(){fatal('Internet yo‘q yoki server javob bermadi. Qayta oching.')});
+})();
+</script></body></html>
