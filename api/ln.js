@@ -163,12 +163,18 @@ async function eligible(kind, rid, toId, except) {
   const r = await db.q(
     "select d.tg_id from ln_drivers d where d.blocked=false and d.online and d.online_at > now() - interval '" + HOURS_ONLINE + " hours' and d.paid_until > now() and d.kind=$1 " +
     "and d.region_id=$2 and d.to_id=$3 and d.tg_id<>$4 " +
-    "and not exists (select 1 from ln_orders o where o.driver_id=d.tg_id and o.status='taken' and o.taken_at > now() - interval '3 hours') order by d.online_at limit 60", [kind, rid, toId || 0, except || 0]);
+    "order by d.online_at limit 60", [kind, rid, toId || 0, except || 0]);
   return r.rows.map(x => +x.tg_id);
 }
 
 async function placeOrder(uid, pname, phone, data) {
   const ids = await eligible(data.k, data.rid, data.to_id, isAdmin(uid) ? 0 : uid); // admin o'zini sinab ko'ra oladi
+  if (!ids.length && process.env.ADMIN_ID) {
+    try {
+      const x = (await db.q("select count(*) filter (where region_id=$1 and to_id=$2)::int r, count(*) filter (where region_id=$1 and to_id=$2 and kind=$3)::int k, count(*) filter (where region_id=$1 and to_id=$2 and kind=$3 and online)::int o, count(*) filter (where region_id=$1 and to_id=$2 and kind=$3 and online and paid_until>now())::int p, count(*) filter (where region_id=$1 and to_id=$2 and kind=$3 and online and paid_until>now() and not blocked and online_at>now()-interval '" + HOURS_ONLINE + " hours')::int ok from ln_drivers", [data.rid, data.to_id || 0, data.k])).rows[0];
+      await quiet(send(String(process.env.ADMIN_ID).trim(), '🔎 <b>Buyurtma uchun haydovchi topilmadi</b>\nYo‘nalish: <b>' + (await routeOf(data.rid, data.to_id)) + '</b> (' + (data.k === 'viloyat' ? 'viloyat' : 'mahalla') + ' taksisi)\n\nShu yo‘nalishdagi haydovchilar: <b>' + x.r + '</b>\n• shu turdagi: ' + x.k + '\n• liniyada: ' + x.o + '\n• to‘lovi bor: ' + x.p + '\n• buyurtma olishga tayyor: <b>' + x.ok + '</b>\n\nBatafsil: /tekshir'));
+    } catch (e) { /* tashxis xatosi buyurtmaga ta'sir qilmasin */ }
+  }
   if (!ids.length) { await clrSt(uid); return home(uid, '😔 Hozir bu yo‘nalishda liniyada haydovchi yo‘q. Birozdan keyin qayta urinib ko‘ring.'); }
   const id = newId(), where = esc(TX.l_from) + ': <b>' + esc(await rname(data.rid)) + '</b>\n' + esc(TX.l_to) + ': <b>' + esc(await rname(data.to_id)) + '</b>';
   await db.q('insert into ln_orders(id,uid,pname,phone,kind,region_id,to_text,addr,lat,lng,to_id,people,uname) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)',
@@ -258,7 +264,6 @@ async function accept(q) {
   if (!d) return answer(q, 'Avval haydovchi sifatida ro‘yxatdan o‘ting', true);
   if (d.blocked) return answer(q, 'Hisobingiz bloklangan', true);
   if (!isPaid(d)) return answer(q, 'To‘lov muddati tugagan. «💳 To‘lov» ni bosing.', true);
-  if ((await db.q("select 1 from ln_orders where driver_id=$1 and status='taken' and taken_at > now() - interval '3 hours'", [from.id])).rows.length) return answer(q, 'Sizda tugamagan buyurtma bor. Avval «🏁 Tugadi» ni bosing.', true);
   const r = await db.q("update ln_orders set status='taken', driver_id=$2, taken_at=now() where id=$1 and status='new' and created > now() - interval '" + ORDER_MIN + " minutes' returning *", [id, from.id]);
   const o = r.rows[0];
   if (!o) {
@@ -445,7 +450,7 @@ async function adminCmd(chat, t) {
     return send(chat, r && r.ok ? '✅ Yuborildi' : '❌ Yuborilmadi (odam botni to‘xtatgan bo‘lishi mumkin)');
   }
   if (/^\/tekshir$/.test(t)) {
-    const r = (await db.q("select d.tg_id,d.name,d.kind,d.region_id,d.to_id,d.online,d.blocked,(d.paid_until>now()) paid,(d.online_at>now()-interval '" + HOURS_ONLINE + " hours') fresh,exists(select 1 from ln_orders o where o.driver_id=d.tg_id and o.status='taken' and o.taken_at>now()-interval '3 hours') busy from ln_drivers d order by d.created desc limit 30")).rows;
+    const r = (await db.q("select d.tg_id,d.name,d.kind,d.region_id,d.to_id,d.online,d.blocked,(d.paid_until>now()) paid,(d.online_at>now()-interval '" + HOURS_ONLINE + " hours') fresh from ln_drivers d order by d.created desc limit 30")).rows;
     if (!r.length) return send(chat, 'Haydovchi yo‘q.');
     let out = '🔎 <b>Haydovchilar holati</b>\n';
     for (const d of r) {
@@ -454,7 +459,6 @@ async function adminCmd(chat, t) {
       if (d.blocked) bad.push('bloklangan');
       if (!d.paid) bad.push('to‘lov yo‘q');
       if (!d.online) bad.push('liniyada emas'); else if (!d.fresh) bad.push('liniya muddati tugagan');
-      if (d.busy) bad.push('band (olgan buyurtmasini «Tugadi» qilmagan)');
       out += '\n' + (bad.length ? '❌' : '✅') + ' <b>' + esc(d.name) + '</b> · ' + (d.kind === 'viloyat' ? 'viloyat' : 'mahalla') + '\n   ' + (d.region_id && d.to_id ? await routeOf(d.region_id, d.to_id) : '—') + (bad.length ? '\n   ⚠️ ' + bad.join(', ') : '\n   buyurtma oladi') + '\n';
     }
     return send(chat, out);
