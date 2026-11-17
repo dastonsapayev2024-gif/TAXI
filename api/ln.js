@@ -11,7 +11,7 @@ const edit = (chat, mid, text, extra) => tg('editMessageText', Object.assign({ c
 const answer = (q, text, alert) => tg('answerCallbackQuery', { callback_query_id: q.id, text: text ? String(text).slice(0, 190) : undefined, show_alert: !!alert }).catch(() => {});
 const quiet = p => p.catch(() => {});
 
-const HOURS_ONLINE = 14;      // liniyada qolish muddati (soat)
+const HOURS_ONLINE = 12;      // liniyada qolish muddati (soat)
 const ORDER_MIN = 20;         // buyurtma necha daqiqa amal qiladi
 const B = {
   taxi: '🚖 Taksi chaqirish', drv: '🚕 Haydovchiman', on: '🟢 Liniyaga chiqish', off: '🔴 Liniyadan chiqish',
@@ -149,9 +149,14 @@ const WELCOME = 'Assalomu alaykum! 🚕 <b>Baxu Taksi</b>\n\n🚖 <b>Taksi chaqi
 const welcome = async () => { const w = await setting('welcome', ''); return w ? plain(w) : WELCOME; };
 
 // ---------- yo'lovchi ----------
+async function activeOrder(uid) {
+  return (await db.q("select id,status from ln_orders where uid=$1 and ((status='new' and created > now() - interval '" + ORDER_MIN + " minutes') or (status='taken' and taken_at > now() - interval '3 hours')) order by created desc limit 1", [uid])).rows[0] || null;
+}
 async function startTaxi(chat) {
   const d = await getDriver(chat);
   if (isPaid(d) && !isAdmin(chat)) return home(chat, '🚕 Siz haydovchisiz, oylik muddatingiz amal qilmoqda (' + fdate(d.paid_until) + ' gacha). Shu muddat ichida o‘zingiz taksi chaqira olmaysiz.');
+  const act = await activeOrder(chat);
+  if (act && !isAdmin(chat)) return send(chat, '⏳ <b>Sizda faol buyurtma bor</b> #' + act.id + '\n' + (act.status === 'taken' ? 'Haydovchi qabul qilgan, u siz bilan bog‘lanadi.' : 'Haydovchilarga yuborilgan, javobni kuting.') + '\n\nYangi buyurtma berish uchun avval shuni yakunlang yoki bekor qiling.', { reply_markup: { inline_keyboard: [[{ text: '❌ Buyurtmani bekor qilish', callback_data: 'pc:' + act.id }]] } });
   await clrSt(chat);
   return send(chat, '🚖 <b>Qanday taksi kerak?</b>\n\n🏘 <b>Mahalla taksisi</b> — o‘z qishlog‘ingiz/mahallangiz ichida\n🛣 <b>Viloyat taksisi</b> — tuman va shaharlar orasida', { reply_markup: { inline_keyboard: [
     [{ text: '🏘 Mahalla taksisi', callback_data: 'pk:m' }],
@@ -168,6 +173,7 @@ async function eligible(kind, rid, toId, except) {
 }
 
 async function placeOrder(uid, pname, phone, data) {
+  if (!isAdmin(uid) && await activeOrder(uid)) { await clrSt(uid); return home(uid, '⏳ Sizda faol buyurtma bor. Avval uni yakunlang yoki bekor qiling.'); }
   const ids = await eligible(data.k, data.rid, data.to_id, isAdmin(uid) ? 0 : uid); // admin o'zini sinab ko'ra oladi
   if (!ids.length && process.env.ADMIN_ID) {
     try {
@@ -229,7 +235,7 @@ async function goOnline(chat, on) {
     if (!isPaid(d)) return home(chat, '⚠️ Liniyaga chiqish uchun oylik to‘lov kerak. «' + B.pay + '» ni bosing.');
     if (!d.region_id || !d.to_id) return startChange(chat);
     await db.q('update ln_drivers set online=true, online_at=now() where tg_id=$1', [chat]);
-    return home(chat, '🟢 Siz liniyadasiz: <b>' + (await routeOf(d.region_id, d.to_id)) + '</b>\nBuyurtma kelsa, shu yerga xabar keladi. ' + HOURS_ONLINE + ' soatdan keyin o‘zi chiqadi.\n\nBoshqa joyga o‘tish: «' + B.line + '».');
+    return home(chat, '🟢 Siz liniyadasiz: <b>' + (await routeOf(d.region_id, d.to_id)) + '</b>\nBuyurtma kelsa, shu yerga xabar keladi.\n\n⚠️ Xizmatni tugatgandan keyin liniyani o‘chirib qo‘yish esingizdan chiqmasin. Unutsangiz, yoqilgandan ' + HOURS_ONLINE + ' soat o‘tgach o‘zi avto chiqadi. Xohlagan paytingizda yana yoqishingiz mumkin.\n\nBoshqa joyga o‘tish: «' + B.line + '».');
   }
   await db.q('update ln_drivers set online=false where tg_id=$1', [chat]);
   return home(chat, '🔴 Liniyadan chiqdingiz.');
@@ -275,7 +281,7 @@ async function accept(q) {
   await answer(q, 'Buyurtma sizniki ✅');
   const where = esc(TX.l_from) + ': ' + esc(await rname(o.region_id)) + '\n' + esc(TX.l_to) + ': ' + esc(o.to_id ? await rname(o.to_id) : (o.to_text || '—'));
   const tgl = o.uname ? '@' + esc(o.uname) : '<a href="tg://user?id=' + o.uid + '">Telegramda yozish</a>';
-  const kb = [[{ text: '🏁 Tugadi', callback_data: 'ld:' + id }, { text: '❌ Bekor', callback_data: 'lc:' + id }]];
+  const kb = [[{ text: '✅ Keldim', callback_data: 'ld:' + id }, { text: '❌ Bekor', callback_data: 'lc:' + id }]];
   if (o.lat != null) kb.unshift([{ text: '🗺 Xaritada ko‘rish', url: mapLink(o.lat, o.lng) }]);
   await edit(chat, mid, '✅ <b>Siz oldingiz</b> #' + id + '\n\n👤 ' + esc(o.pname) + '\n📞 <b>' + esc(showPhone(o.phone)) + '</b>\n💬 ' + tgl + '\n👥 Necha kishi: <b>' + (o.people || 1) + '</b>\n📍 ' + where + '\n📌 ' + esc(o.addr || 'Lokatsiya') + '\n\nYo‘lovchi bilan bog‘lanib, borib oling. Narxni o‘zaro kelishasiz.', { reply_markup: { inline_keyboard: kb } });
   if (o.lat != null) await quiet(tg('sendLocation', { chat_id: chat, latitude: o.lat, longitude: o.lng }));
@@ -289,7 +295,7 @@ async function finish(q, kind) {
   const r = await db.q("update ln_orders set status=$3, done_at=now() where id=$1 and driver_id=$2 and status='taken' returning uid", [id, from.id, kind === 'done' ? 'done' : 'cancelled']);
   if (!r.rows[0]) return answer(q, 'Buyurtma allaqachon yopilgan', true);
   await answer(q, kind === 'done' ? 'Rahmat! 🏁' : 'Bekor qilindi');
-  await edit(chat, mid, (kind === 'done' ? '🏁 Safar yakunlandi' : '❌ Siz bekor qildingiz') + ' #' + id + '. Liniyada qolasiz.');
+  await edit(chat, mid, (kind === 'done' ? '✅ Keldim deb belgilandi' : '❌ Siz bekor qildingiz') + ' #' + id + '. Liniyada qolasiz.');
   if (kind !== 'done') await quiet(send(r.rows[0].uid, '❌ Haydovchi buyurtmani bekor qildi #' + id + '. Qayta buyurtma bering: «' + B.taxi + '».'));
 }
 async function passengerCancel(q) {
