@@ -67,7 +67,8 @@ async function onPrivate(m) {
       await db.q('update drivers set blocked=$1 where tg_id=$2', [m2[1] === 'block', m2[2]]);
       return send(chat, m2[1] === 'block' ? '⛔ Bloklandi' : '✅ Blok olindi');
     }
-    if (/^\/(help|yordam)$/.test(t)) return send(chat, '/stat — statistika\n/add ID SUMMA — balans qo‘shish (minus ham mumkin)\n/block ID, /unblock ID');
+    if (/^\/(panel|admin)$/.test(t)) return send(chat, '🛠 <b>Admin paneli</b> (xarita, statistika, haydovchilar, buyurtmalar):', { reply_markup: { inline_keyboard: [[{ text: '🛠 Panelni ochish', web_app: { url: BASE + '/admin.html' } }]] } });
+    if (/^\/(help|yordam)$/.test(t)) return send(chat, '/panel — admin paneli\n/stat — statistika\n/add ID SUMMA — balans qo‘shish (minus ham mumkin)\n/block ID, /unblock ID');
   }
 
   // ---- haydovchi menyusi ----
