@@ -302,8 +302,20 @@ async function accept(q) {
   if (o.lat != null) await quiet(tg('sendLocation', Object.assign({ chat_id: chat, latitude: o.lat, longitude: o.lng }, o.acc != null ? { horizontal_accuracy: Math.min(1500, Math.max(1, o.acc)) } : {})));
   const others = (await db.q('select chat_id,msg_id from ln_msgs where order_id=$1 and chat_id<>$2', [id, from.id])).rows;
   for (const m of others) await edit(m.chat_id, m.msg_id, '⏱ Buyurtma #' + id + ' boshqa haydovchi tomonidan olindi.');
-  await quiet(send(o.uid, '✅ <b>Buyurtmangiz qabul qilindi!</b> #' + id + '\n\n🚕 Haydovchi: <b>' + esc(d.name) + '</b>\n🚗 ' + esc(d.car) + '\n📞 <b>' + esc(showPhone(d.phone)) + '</b>\n\nHaydovchi siz bilan bog‘lanadi va kelib oladi. Narxni haydovchi bilan o‘zaro kelishasiz.',
-    { reply_markup: { inline_keyboard: [[{ text: '🔔 Haydovchiga eslatish', callback_data: 'pr:' + id }], [{ text: '❌ Bekor qilish', callback_data: 'pc:' + id }]] } }));
+  const rr = (await db.q('select count(rating)::int n, round(avg(rating)::numeric,1) a from ln_orders where driver_id=$1', [d.tg_id])).rows[0];
+  const ratingLine = rr && rr.n > 0 ? '\n⭐ Baho: <b>' + rr.a + '</b> (' + rr.n + ' ta)' : '';
+  const cardText = '✅ <b>Buyurtmangiz qabul qilindi!</b> #' + id + '\n\n🚕 Haydovchi: <b>' + esc(d.name) + '</b>\n🚗 ' + esc(d.car) + ratingLine + '\n📞 <b>' + esc(showPhone(d.phone)) + '</b>\n\nHaydovchi siz bilan bog‘lanadi va kelib oladi. Narxni haydovchi bilan o‘zaro kelishasiz.';
+  const cardKb = { inline_keyboard: [[{ text: '🔔 Haydovchiga eslatish', callback_data: 'pr:' + id }], [{ text: '❌ Bekor qilish', callback_data: 'pc:' + id }]] };
+  let sentCard = false;
+  try {
+    const ph = await tg('getUserProfilePhotos', { user_id: d.tg_id, limit: 1 });
+    const sizes = ph && ph.photos && ph.photos[0];
+    if (sizes && sizes.length) {
+      await tg('sendPhoto', { chat_id: o.uid, photo: sizes[Math.min(1, sizes.length - 1)].file_id, caption: cardText, parse_mode: 'HTML', reply_markup: cardKb });
+      sentCard = true;
+    }
+  } catch (e) {}
+  if (!sentCard) await quiet(send(o.uid, cardText, { reply_markup: cardKb }));
 }
 async function remind(q) {
   const id = q.data.split(':')[1], from = q.from;
@@ -325,7 +337,21 @@ async function finish(q, kind) {
   if (!r.rows[0]) return answer(q, 'Buyurtma allaqachon yopilgan', true);
   await answer(q, kind === 'done' ? 'Rahmat! 🏁' : 'Bekor qilindi');
   await edit(chat, mid, (kind === 'done' ? '✅ Keldim deb belgilandi' : '❌ Siz bekor qildingiz') + ' #' + id + '. Liniyada qolasiz.');
+  if (kind === 'done') {
+    const dr = await getDriver(from.id);
+    await quiet(send(r.rows[0].uid, '🚖 <b>Haydovchi yetib keldi!</b> #' + id + '\n\n' + (dr ? esc(dr.name) + ' · ' + esc(dr.car) + '\n📞 ' + esc(showPhone(dr.phone)) + '\n\n' : '') + 'Iltimos, chiqing. Safardan keyin haydovchiga baho bering 👇',
+      { reply_markup: { inline_keyboard: [[1, 2, 3, 4, 5].map(n => ({ text: '⭐' + n, callback_data: 'rt:' + id + ':' + n }))] } }));
+  }
   if (kind !== 'done') await quiet(send(r.rows[0].uid, '❌ Haydovchi buyurtmani bekor qildi #' + id + '. Qayta buyurtma bering: «' + B.taxi + '».'));
+}
+async function rate(q) {
+  const [, id, n] = q.data.split(':'), from = q.from, chat = q.message.chat.id, mid = q.message.message_id;
+  const v = +n;
+  if (!(v >= 1 && v <= 5)) return answer(q, 'Xato', true);
+  const r = await db.q("update ln_orders set rating=$3 where id=$1 and uid=$2 and status='done' and rating is null returning id", [id, from.id, v]);
+  if (!r.rows[0]) return answer(q, 'Baho allaqachon qo‘yilgan', true);
+  await answer(q, 'Rahmat! ⭐');
+  await quiet(edit(chat, mid, '⭐ <b>Bahoingiz: ' + v + '/5</b> #' + id + '\nRahmat, fikringiz biz uchun muhim!'));
 }
 async function passengerCancel(q) {
   const id = q.data.split(':')[1], from = q.from;
@@ -355,11 +381,11 @@ async function regTree(pid, lvl) {
 async function driverCard(chat, id) {
   const d = await getDriver(id);
   if (!d) return send(chat, '❌ Haydovchi topilmadi');
-  const n = (await db.q("select count(*) filter (where status='done')::int done, count(*)::int tot from ln_orders where driver_id=$1", [id])).rows[0];
+  const n = (await db.q("select count(*) filter (where status='done')::int done, count(*)::int tot, count(rating)::int rn, round(avg(rating)::numeric,1) ra from ln_orders where driver_id=$1", [id])).rows[0];
   const text = '🚕 <b>' + esc(d.name) + '</b> · <code>' + d.tg_id + '</code>' + (d.username ? ' · @' + esc(d.username) : '') + '\n📞 ' + esc(showPhone(d.phone)) + '\n🚗 ' + esc(d.car) +
     '\n🏷 ' + (d.kind === 'viloyat' ? 'Viloyat' : 'Mahalla') + ' taksisi\n📍 ' + (d.region_id && d.to_id ? await routeOf(d.region_id, d.to_id) : '—') +
     '\n💰 ' + (isPaid(d) ? '✅ ' + fdate(d.paid_until) + ' gacha (' + daysLeft(d.paid_until) + ' kun)' : '❌ to‘lov yo‘q') + '\n' + (d.online ? '🟢 Liniyada' : '🔴 Liniyada emas') + (d.blocked ? '\n⛔ <b>Bloklangan</b>' : '') +
-    '\n📦 Buyurtmalar: ' + n.done + ' bajarilgan / ' + n.tot + ' jami\n🗓 Ro‘yxatdan: ' + fdate(d.created);
+    '\n📦 Buyurtmalar: ' + n.done + ' bajarilgan / ' + n.tot + ' jami' + (n.rn > 0 ? '\n⭐ Baho: ' + n.ra + ' (' + n.rn + ' ta)' : '') + '\n🗓 Ro‘yxatdan: ' + fdate(d.created);
   return send(chat, text, { reply_markup: { inline_keyboard: [
     [d.blocked ? { text: '✅ Blokdan olish', callback_data: 'dc:ubl:' + id } : { text: '⛔ Bloklash', callback_data: 'dc:blk:' + id }],
     [{ text: '➕ +30 kun', callback_data: 'dc:add:' + id }, { text: '⏹ To‘xtatish', callback_data: 'dc:off:' + id }],
@@ -705,6 +731,7 @@ async function onCallback(q) {
   if (k === 'ch') { await answer(q); return startChange(chat); }
   if (k === 'la') return accept(q);
   if (k === 'ld') return finish(q, 'done');
+  if (k === 'rt') return rate(q);
   if (k === 'lc') return finish(q, 'cancel');
   if (k === 'pc') return passengerCancel(q);
   if (k === 'pr') return remind(q);
@@ -750,7 +777,7 @@ async function ensureMenu(force) {
     if (r && r.ok) await setSetting('menu_off', '2'); else menuDone = false;
   } catch (e) { menuDone = false; }
 }
-const CB = new Set(['tx', 'pk', 'kd', 'rg', 'rs', 'pw', 'la', 'ld', 'lc', 'pc', 'pr', 'pa', 'am', 'ia', 'on', 'ch', 'bc', 'bk', 'dc']);
+const CB = new Set(['tx', 'pk', 'kd', 'rg', 'rs', 'pw', 'la', 'ld', 'lc', 'pc', 'pr', 'rt', 'pa', 'am', 'ia', 'on', 'ch', 'bc', 'bk', 'dc']);
 const menuChats = new Set();
 async function chatMenu(chat) {
   if (!chat || menuChats.has(chat)) return;
