@@ -267,8 +267,10 @@ async function startChange(chat) {
   const d = await getDriver(chat);
   if (!d) return home(chat, 'Avval «' + B.drv + '» orqali ro‘yxatdan o‘ting.');
   await setSt(chat, 'd_chg', {});
-  const s = await regScreen(d.kind === 'viloyat' ? 'dv' : 'dm', 0);
-  return send(chat, s.text, { reply_markup: s.kb });
+  const cur = d.kind === 'viloyat' ? 'viloyat' : 'mahalla';
+  return send(chat, '📍 <b>Qaysi taksi liniyasiga o‘tasiz?</b>\n\n🏘 <b>Mahalla taksisi</b> — mahallangiz/qishlog‘ingiz ichida\n🛣 <b>Viloyat taksisi</b> — viloyatlar orasida\n\nHozir: <b>' + (cur === 'viloyat' ? 'Viloyat' : 'Mahalla') + ' taksisi</b>', { reply_markup: { inline_keyboard: [
+    [{ text: (cur === 'mahalla' ? '✅ ' : '') + '🏘 Mahalla taksisi', callback_data: 'kc:m' }],
+    [{ text: (cur === 'viloyat' ? '✅ ' : '') + '🛣 Viloyat taksisi', callback_data: 'kc:v' }]] } });
 }
 async function startPay(chat) {
   const d = await getDriver(chat);
@@ -705,6 +707,13 @@ async function onCallback(q) {
     const s = await regScreen(d[1] === 'm' ? 'dm' : 'dv', 0);
     return edit(chat, mid, s.text, { reply_markup: s.kb });
   }
+  if (k === 'kc') { // liniyani o'zgartirishda taksi turini tanlash
+    await answer(q);
+    if (!(await getDriver(chat))) return home(chat, 'Avval «' + B.drv + '» orqali ro‘yxatdan o‘ting.');
+    await setSt(chat, 'd_chg', { kind: d[1] === 'm' ? 'mahalla' : 'viloyat' });
+    const s = await regScreen(d[1] === 'm' ? 'dm' : 'dv', 0);
+    return edit(chat, mid, s.text, { reply_markup: s.kb });
+  }
   if (k === 'rg') { await answer(q); const s = await regScreen(d[1], +d[2] || 0); return edit(chat, mid, s.text, { reply_markup: s.kb }); }
   if (k === 'pw') { await answer(q); const { d: sd } = await getSt(chat); await setSt(chat, 'p_to', sd); return edit(chat, mid, '🏁 <b>Qayerga borasiz?</b>\nYozing (masalan: <i>Urganch bozori</i> yoki <i>Toshkent</i>):'); }
   if (k === 'rs') {
@@ -735,7 +744,7 @@ async function onCallback(q) {
       if (st === 'd_reg2') return finishReg(chat, from, sd, sd.from_id, rid);
       const dr = await getDriver(chat);
       if (!dr) return home(chat, 'Avval «' + B.drv + '» orqali ro‘yxatdan o‘ting.');
-      await db.q('update ln_drivers set region_id=$2, to_id=$3 where tg_id=$1', [chat, sd.from_id, rid]); await clrSt(chat);
+      await db.q('update ln_drivers set region_id=$2, to_id=$3, kind=$4 where tg_id=$1', [chat, sd.from_id, rid, mode === 'dw' ? 'viloyat' : 'mahalla']); await clrSt(chat);
       return send(chat, '📍 Liniyangiz: <b>' + (await routeOf(sd.from_id, rid)) + '</b>' + (isPaid(dr) ? '\nEndi «' + B.on + '» ni bosing.' : '\nLiniyaga chiqish uchun oylik to‘lov kerak.'), { reply_markup: await menuKb(chat) });
     }
     return;
@@ -790,7 +799,7 @@ async function ensureMenu(force) {
     if (r && r.ok) await setSetting('menu_off', '2'); else menuDone = false;
   } catch (e) { menuDone = false; }
 }
-const CB = new Set(['tx', 'pk', 'kd', 'rg', 'rs', 'pw', 'la', 'ld', 'lc', 'pc', 'pr', 'rt', 'pa', 'am', 'ia', 'on', 'ch', 'bc', 'bk', 'dc']);
+const CB = new Set(['tx', 'pk', 'kd', 'rg', 'rs', 'pw', 'la', 'ld', 'lc', 'pc', 'pr', 'rt', 'kc', 'pa', 'am', 'ia', 'on', 'ch', 'bc', 'bk', 'dc']);
 const menuChats = new Set();
 async function chatMenu(chat) {
   if (!chat || menuChats.has(chat)) return;
