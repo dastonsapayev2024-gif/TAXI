@@ -63,6 +63,7 @@ alter table ln_orders add column if not exists to_id int;
 alter table ln_orders add column if not exists people int;
 alter table ln_orders add column if not exists uname text;
 alter table ln_orders add column if not exists remind_at timestamptz;
+alter table ln_orders add column if not exists acc real;
 update ln_regions set name='O‘rta Qishloq (Nezaxos)' where name='O‘rta Qishloq' and kind='mahalla';
 insert into ln_regions(parent_id,name,kind,active) select null, v, 'viloyat', false from unnest(array['Toshkent shahri','Toshkent viloyati','Samarqand','Buxoro','Navoiy','Qashqadaryo','Surxondaryo','Jizzax','Sirdaryo','Farg‘ona','Andijon','Namangan','Qoraqalpog‘iston']) as v on conflict do nothing;
 
