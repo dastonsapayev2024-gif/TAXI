@@ -96,12 +96,17 @@ async function loadTx(force) {
 }
 async function regScreen(mode, nodeId) {
   // mahalla taksisi va mahalla haydovchisi: bitta tekis ro'yxat (oyna ichida oyna yo'q)
-  if (mode === 'tm' || mode === 'fm' || mode === 'dm' || mode === 'dt' || TUMAN_ONLY(mode)) {
+  if (TUMAN_ONLY(mode)) {
+    // viloyat taksisi: faqat viloyatlar ro'yxati (viloyat → viloyat)
+    const vs = (await kids(null)).filter(k => k.kind === 'viloyat');
+    return { text: HEAD[mode] + '\n\n' + esc(TX.hint_root), kb: { inline_keyboard: vs.map(k => [{ text: k.name, callback_data: 'rs:' + mode + ':' + k.id }]) } };
+  }
+  if (mode === 'tm' || mode === 'fm' || mode === 'dm' || mode === 'dt') {
     const tum = [], mah = [];
     for (const v of (await kids(null)).filter(k => k.active)) {
       for (const t of (await kids(v.id)).filter(k => k.active)) {
         tum.push(t);
-        if (!TUMAN_ONLY(mode)) for (const m of (await kids(t.id)).filter(k => k.active)) mah.push(m);
+        for (const m of (await kids(t.id)).filter(k => k.active)) mah.push(m);
       }
     }
     const srt = (x, y) => String(x.name).localeCompare(String(y.name), 'uz');
@@ -667,7 +672,7 @@ async function onCallback(q) {
   if (k === 'rs') {
     const mode = d[1], rid = +d[2], node = await reg(rid);
     if (!node) return answer(q, 'Hudud topilmadi', true);
-    if (!node.active) return answer(q, '🕓 Bu hudud uchun xizmat tez kunda ishga tushadi.', true);
+    if (!node.active && !TUMAN_ONLY(mode)) return answer(q, '🕓 Bu hudud uchun xizmat tez kunda ishga tushadi.', true);
     await answer(q);
     const { st, d: sd } = await getSt(chat);
     if (mode === 'tm' || mode === 'pt') {
