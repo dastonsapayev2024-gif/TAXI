@@ -96,12 +96,12 @@ async function loadTx(force) {
 }
 async function regScreen(mode, nodeId) {
   // mahalla taksisi va mahalla haydovchisi: bitta tekis ro'yxat (oyna ichida oyna yo'q)
-  if (mode === 'tm' || mode === 'fm' || mode === 'dm' || mode === 'dt') {
+  if (mode === 'tm' || mode === 'fm' || mode === 'dm' || mode === 'dt' || TUMAN_ONLY(mode)) {
     const tum = [], mah = [];
     for (const v of (await kids(null)).filter(k => k.active)) {
       for (const t of (await kids(v.id)).filter(k => k.active)) {
         tum.push(t);
-        for (const m of (await kids(t.id)).filter(k => k.active)) mah.push(m);
+        if (!TUMAN_ONLY(mode)) for (const m of (await kids(t.id)).filter(k => k.active)) mah.push(m);
       }
     }
     const srt = (x, y) => String(x.name).localeCompare(String(y.name), 'uz');
@@ -186,8 +186,8 @@ async function placeOrder(uid, pname, phone, data) {
   }
   if (!ids.length) { await clrSt(uid); return home(uid, '😔 Hozir bu yo‘nalishda liniyada haydovchi yo‘q. Birozdan keyin qayta urinib ko‘ring.'); }
   const id = newId(), where = esc(TX.l_from) + ': <b>' + esc(await rname(data.rid)) + '</b>\n' + esc(TX.l_to) + ': <b>' + esc(await rname(data.to_id)) + '</b>';
-  await db.q('insert into ln_orders(id,uid,pname,phone,kind,region_id,to_text,addr,lat,lng,to_id,people,uname) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)',
-    [id, uid, pname, phone, data.k, data.rid, data.to_text || '', data.addr || '', data.lat == null ? null : data.lat, data.lng == null ? null : data.lng, data.to_id || null, data.people || 1, data.uname || '']);
+  await db.q('insert into ln_orders(id,uid,pname,phone,kind,region_id,to_text,addr,lat,lng,to_id,people,uname,acc) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)',
+    [id, uid, pname, phone, data.k, data.rid, data.to_text || '', data.addr || '', data.lat == null ? null : data.lat, data.lng == null ? null : data.lng, data.to_id || null, data.people || 1, data.uname || '', data.acc == null ? null : data.acc]);
   const text = '🚕 <b>Yangi buyurtma</b> #' + id + '\n📍 ' + where + '\n📌 Manzil: ' + esc(data.addr || 'Lokatsiya') + '\n👥 Necha kishi: <b>' + (data.people || 1) + '</b>\n👤 ' + esc(pname);
   const kb = [[{ text: '✅ Qabul qilaman', callback_data: 'la:' + id }]];
   if (data.lat != null) kb.push([{ text: '🗺 Xaritada ko‘rish', url: mapLink(data.lat, data.lng) }]);
@@ -208,11 +208,14 @@ async function afterAddr(chat, from, d) {
   await setSt(chat, 'p_ppl', d);
   return send(chat, '👥 <b>Necha kishi borasiz?</b>\nPastdagi raqamlardan birini bosing.', { reply_markup: { keyboard: [[{ text: '1' }, { text: '2' }, { text: '3' }, { text: '4' }], [{ text: '5' }, { text: '6' }, { text: '7' }, { text: '8' }], [{ text: B.cancel }]], resize_keyboard: true } });
 }
+const LOC_MAX = 25, LOC_OK = '✅ Shu lokatsiya yetadi';
+const PH_YES = '✅ Ha, shu raqam', PH_OTHER = '✏️ Boshqa raqam';
+const phoneKb = () => ({ keyboard: [[{ text: '📲 Telegram raqamimni yuborish', request_contact: true }], [{ text: B.cancel }]], resize_keyboard: true });
 async function afterPeople(chat, from, d) {
   const u = (await db.q('select phone from ln_users where tg_id=$1', [chat])).rows[0];
-  if (u && u.phone) return placeOrder(chat, nameOf(from), u.phone, d);
   await setSt(chat, 'p_phone', d);
-  return send(chat, PHONE_ASK, { reply_markup: { keyboard: [[{ text: '📞 Raqamni yuborish', request_contact: true }], [{ text: B.cancel }]], resize_keyboard: true } });
+  if (u && u.phone) return send(chat, '📞 <b>Telefon raqamingiz:</b> <code>' + esc(showPhone(u.phone)) + '</code>\n\nHaydovchi shu raqamga qo‘ng‘iroq qiladi. <b>Shu raqammi?</b>', { reply_markup: { keyboard: [[{ text: PH_YES }], [{ text: PH_OTHER }], [{ text: B.cancel }]], resize_keyboard: true } });
+  return send(chat, PHONE_ASK, { reply_markup: phoneKb() });
 }
 
 // ---------- haydovchi ----------
@@ -291,7 +294,7 @@ async function accept(q) {
   const kb = [[{ text: '✅ Keldim', callback_data: 'ld:' + id }, { text: '❌ Bekor', callback_data: 'lc:' + id }]];
   if (o.lat != null) kb.unshift([{ text: '🗺 Xaritada ko‘rish', url: mapLink(o.lat, o.lng) }]);
   await edit(chat, mid, '✅ <b>Siz oldingiz</b> #' + id + '\n\n👤 ' + esc(o.pname) + '\n📞 <b>' + esc(showPhone(o.phone)) + '</b>\n💬 ' + tgl + '\n👥 Necha kishi: <b>' + (o.people || 1) + '</b>\n📍 ' + where + '\n📌 ' + esc(o.addr || 'Lokatsiya') + '\n\nYo‘lovchi bilan bog‘lanib, borib oling. Narxni o‘zaro kelishasiz.', { reply_markup: { inline_keyboard: kb } });
-  if (o.lat != null) await quiet(tg('sendLocation', { chat_id: chat, latitude: o.lat, longitude: o.lng }));
+  if (o.lat != null) await quiet(tg('sendLocation', Object.assign({ chat_id: chat, latitude: o.lat, longitude: o.lng }, o.acc != null ? { horizontal_accuracy: Math.min(1500, Math.max(1, o.acc)) } : {})));
   const others = (await db.q('select chat_id,msg_id from ln_msgs where order_id=$1 and chat_id<>$2', [id, from.id])).rows;
   for (const m of others) await edit(m.chat_id, m.msg_id, '⏱ Buyurtma #' + id + ' boshqa haydovchi tomonidan olindi.');
   await quiet(send(o.uid, '✅ <b>Buyurtmangiz qabul qilindi!</b> #' + id + '\n\n🚕 Haydovchi: <b>' + esc(d.name) + '</b>\n🚗 ' + esc(d.car) + '\n📞 <b>' + esc(showPhone(d.phone)) + '</b>\n\nHaydovchi siz bilan bog‘lanadi va kelib oladi. Narxni haydovchi bilan o‘zaro kelishasiz.',
@@ -593,12 +596,26 @@ async function onMessage(m) {
     d.people = n; return afterPeople(chat, from, d);
   }
   if (st === 'p_addr') {
-    if (m.location) { d.lat = m.location.latitude; d.lng = m.location.longitude; d.addr = (t && t !== B.cancel ? t : 'Lokatsiya'); }
+    if (t === LOC_OK && d.pend) { d.lat = d.pend.lat; d.lng = d.pend.lng; d.acc = d.pend.acc; d.addr = 'Lokatsiya'; delete d.pend; }
+    else if (m.location) {
+      const acc = m.location.horizontal_accuracy == null ? null : Math.round(m.location.horizontal_accuracy);
+      if (acc != null && acc > LOC_MAX && !d.warned) {
+        d.warned = true; d.pend = { lat: m.location.latitude, lng: m.location.longitude, acc };
+        await setSt(chat, 'p_addr', d);
+        return send(chat, '📍 Lokatsiya aniqligi taxminan <b>±' + acc + ' metr</b> (kerak: ' + LOC_MAX + ' m gacha).\n\nAniqroq bo‘lishi uchun <b>ochiq joyda turib</b>, GPS yoqilgan holda qayta yuboring.\n📱 iPhone: Sozlamalar → Maxfiylik → Joylashuv xizmatlari → Telegram → <b>«Aniq joylashuv»</b> ni yoqing.\n\nQayta yuborish yoki shu lokatsiya yetarli bo‘lsa, pastdagi tugmani bosing.', { reply_markup: { keyboard: [[{ text: '📍 Lokatsiyani qayta yuborish', request_location: true }], [{ text: LOC_OK }], [{ text: B.cancel }]], resize_keyboard: true } });
+      }
+      d.lat = m.location.latitude; d.lng = m.location.longitude; d.acc = acc; delete d.pend; d.addr = (t && t !== B.cancel ? t : 'Lokatsiya');
+    }
     else if (t.length >= 3) { d.addr = t.slice(0, 200); }
     else return send(chat, 'Lokatsiya yuboring yoki manzilni yozing.');
     return afterAddr(chat, from, d);
   }
   if (st === 'p_phone') {
+    if (t === PH_YES) {
+      const u = (await db.q('select phone from ln_users where tg_id=$1', [chat])).rows[0];
+      if (u && u.phone) return placeOrder(chat, nameOf(from), u.phone, d);
+    }
+    if (t === PH_OTHER) return send(chat, '✏️ <b>Yangi raqamni yozing</b>: <code>90 123 45 67</code>\nYoki pastdagi tugma bilan Telegram raqamingizni yuboring.', { reply_markup: phoneKb() });
     const ph = normPhone(m.contact ? m.contact.phone_number : t);
     if (!ph) return send(chat, 'Raqam noto‘g‘ri. Masalan: <code>90 123 45 67</code>');
     await db.q('insert into ln_users(tg_id,name,phone) values($1,$2,$3) on conflict (tg_id) do update set phone=excluded.phone, name=excluded.name', [chat, nameOf(from), ph]);
