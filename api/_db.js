@@ -68,6 +68,29 @@ alter table ln_orders add column if not exists rating smallint;
 update ln_regions set name='O‘rta Qishloq (Nezaxos)' where name='O‘rta Qishloq' and kind='mahalla';
 insert into ln_regions(parent_id,name,kind,active) select null, v, 'viloyat', false from unnest(array['Toshkent shahri','Toshkent viloyati','Samarqand','Buxoro','Navoiy','Qashqadaryo','Surxondaryo','Jizzax','Sirdaryo','Farg‘ona','Andijon','Namangan','Qoraqalpog‘iston']) as v on conflict do nothing;
 
+do $pop$ declare r record; begin
+  for r in select * from (values
+  ('Xorazm', array['Shovot','Xonqa','Hazorasp','Yangiariq','Yangibozor','Bog‘ot','Gurlan']),
+  ('Toshkent shahri', array['Chilonzor','Yunusobod','Mirzo Ulug‘bek','Sergeli','Yakkasaroy','Shayxontohur','Olmazor','Mirobod','Yashnobod','Uchtepa']),
+  ('Toshkent viloyati', array['Chirchiq','Olmaliq','Angren','Bekobod','Yangiyo‘l','Nurafshon','Zangiota','Qibray','Ohangaron','Parkent']),
+  ('Samarqand', array['Samarqand shahri','Urgut','Kattaqo‘rg‘on','Bulung‘ur','Jomboy','Ishtixon','Pastdarg‘om','Narpay','Payariq','Oqdaryo']),
+  ('Buxoro', array['Buxoro shahri','G‘ijduvon','Kogon','Qorako‘l','Vobkent','Shofirkon','Romitan','Jondor']),
+  ('Navoiy', array['Navoiy shahri','Zarafshon','Uchquduq','Karmana','Nurota','Xatirchi','Qiziltepa']),
+  ('Qashqadaryo', array['Qarshi','Shahrisabz','Kitob','Koson','G‘uzor','Muborak','Yakkabog‘','Chiroqchi','Dehqonobod']),
+  ('Surxondaryo', array['Termiz','Denov','Sho‘rchi','Sherobod','Boysun','Qumqo‘rg‘on','Jarqo‘rg‘on','Angor']),
+  ('Jizzax', array['Jizzax shahri','Zomin','G‘allaorol','Do‘stlik','Forish','Paxtakor','Baxmal']),
+  ('Sirdaryo', array['Guliston','Yangiyer','Shirin','Sirdaryo tumani','Boyovut','Sardoba']),
+  ('Farg‘ona', array['Farg‘ona shahri','Qo‘qon','Marg‘ilon','Quvasoy','Beshariq','Rishton','Oltiariq','Quva','Uchko‘prik','Bog‘dod']),
+  ('Andijon', array['Andijon shahri','Asaka','Shahrixon','Xonobod','Marhamat','Paxtaobod','Qo‘rg‘ontepa','Oltinko‘l','Bo‘z','Xo‘jaobod']),
+  ('Namangan', array['Namangan shahri','Chust','Pop','Kosonsoy','Uchqo‘rg‘on','To‘raqo‘rg‘on','Chortoq','Uychi','Mingbuloq']),
+  ('Qoraqalpog‘iston', array['Nukus','Xo‘jayli','Qo‘ng‘irot','To‘rtko‘l','Beruniy','Chimboy','Mo‘ynoq','Qanliko‘l','Taxiatosh','Amudaryo'])
+  ) as t(v, arr) loop
+    insert into ln_regions(parent_id,name,kind,active)
+      select v.id, u.n, 'tuman', false from ln_regions v, unnest(r.arr) with ordinality as u(n,o)
+      where v.kind='viloyat' and v.parent_id is null and lower(v.name)=lower(r.v) order by u.o
+      on conflict do nothing;
+  end loop;
+end $pop$;
 alter table drivers add column if not exists car text not null default '';
 alter table drivers add column if not exists phone text not null default '';
 create table if not exists settings(key text primary key, val text not null, updated timestamptz not null default now());

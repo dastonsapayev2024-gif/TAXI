@@ -97,9 +97,21 @@ async function loadTx(force) {
 async function regScreen(mode, nodeId) {
   // mahalla taksisi va mahalla haydovchisi: bitta tekis ro'yxat (oyna ichida oyna yo'q)
   if (TUMAN_ONLY(mode)) {
-    // viloyat taksisi: faqat viloyatlar ro'yxati (viloyat → viloyat)
-    const vs = (await kids(null)).filter(k => k.kind === 'viloyat');
-    return { text: HEAD[mode] + '\n\n' + esc(TX.hint_root), kb: { inline_keyboard: vs.map(k => [{ text: k.name, callback_data: 'rs:' + mode + ':' + k.id }]) } };
+    // viloyat taksisi: viloyatlar 2 ustunli chiroyli katak; «qayerdan»da viloyat ichidagi mashhur tuman/shaharlar
+    const grid = items => { const rows = []; for (let n = 0; n < items.length; n += 2) rows.push(items.slice(n, n + 2).map(k => ({ text: k.text, callback_data: k.cb }))); return rows; };
+    if (!nodeId) {
+      const items = [];
+      for (const k of (await kids(null)).filter(x => x.kind === 'viloyat')) {
+        const has = mode === 'pf' && (await kids(k.id)).some(x => x.kind === 'tuman');
+        items.push({ text: k.name, cb: (has ? 'rg:' : 'rs:') + mode + ':' + k.id });
+      }
+      return { text: HEAD[mode] + '\n\n' + esc(TX.hint_root), kb: { inline_keyboard: grid(items) } };
+    }
+    const vnode = await reg(nodeId);
+    const rows = grid((await kids(nodeId)).filter(x => x.kind === 'tuman').map(k => ({ text: k.name, cb: 'rs:' + mode + ':' + k.id })));
+    rows.push([{ text: '📍 Boshqa joy (' + (vnode ? vnode.name : 'viloyat') + ' bo‘ylab)', callback_data: 'rs:' + mode + ':' + nodeId }]);
+    rows.push([{ text: TX.back, callback_data: 'rg:' + mode + ':0' }]);
+    return { text: HEAD[mode] + '\n📍 ' + esc(vnode ? vnode.name : '') + '\n\n' + esc(TX.hint_tuman), kb: { inline_keyboard: rows } };
   }
   if (mode === 'tm' || mode === 'fm' || mode === 'dm' || mode === 'dt') {
     const tum = [], mah = [];
@@ -190,10 +202,10 @@ async function placeOrder(uid, pname, phone, data) {
     } catch (e) { /* tashxis xatosi buyurtmaga ta'sir qilmasin */ }
   }
   if (!ids.length) { await clrSt(uid); return home(uid, '😔 Hozir bu yo‘nalishda liniyada haydovchi yo‘q. Birozdan keyin qayta urinib ko‘ring.'); }
-  const id = newId(), where = esc(TX.l_from) + ': <b>' + esc(await rname(data.rid)) + '</b>\n' + esc(TX.l_to) + ': <b>' + esc(await rname(data.to_id)) + '</b>';
+  const id = newId(), addrFull = (data.sub ? data.sub + ' · ' : '') + (data.addr || 'Lokatsiya'), where = esc(TX.l_from) + ': <b>' + esc(await rname(data.rid)) + (data.sub ? ' › ' + esc(data.sub) : '') + '</b>\n' + esc(TX.l_to) + ': <b>' + esc(await rname(data.to_id)) + '</b>';
   await db.q('insert into ln_orders(id,uid,pname,phone,kind,region_id,to_text,addr,lat,lng,to_id,people,uname,acc) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)',
-    [id, uid, pname, phone, data.k, data.rid, data.to_text || '', data.addr || '', data.lat == null ? null : data.lat, data.lng == null ? null : data.lng, data.to_id || null, data.people || 1, data.uname || '', data.acc == null ? null : data.acc]);
-  const text = '🚕 <b>Yangi buyurtma</b> #' + id + '\n📍 ' + where + '\n📌 Manzil: ' + esc(data.addr || 'Lokatsiya') + '\n👥 Necha kishi: <b>' + (data.people || 1) + '</b>\n👤 ' + esc(pname);
+    [id, uid, pname, phone, data.k, data.rid, data.to_text || '', (data.sub ? data.sub + ' · ' : '') + (data.addr || ''), data.lat == null ? null : data.lat, data.lng == null ? null : data.lng, data.to_id || null, data.people || 1, data.uname || '', data.acc == null ? null : data.acc]);
+  const text = '🚕 <b>Yangi buyurtma</b> #' + id + '\n📍 ' + where + '\n📌 Manzil: ' + esc(addrFull) + '\n👥 Necha kishi: <b>' + (data.people || 1) + '</b>\n👤 ' + esc(pname);
   const kb = [[{ text: '✅ Qabul qilaman', callback_data: 'la:' + id }]];
   if (data.lat != null) kb.push([{ text: '🗺 Xaritada ko‘rish', url: mapLink(data.lat, data.lng) }]);
   let sent = 0;
@@ -373,7 +385,7 @@ const ADM_KB = { inline_keyboard: [
 async function regTree(pid, lvl) {
   let out = '';
   for (const k of await kids(pid || null)) {
-    if (lvl === 0 && !k.active && !(await kids(k.id)).length) { out += '• ' + esc(k.name) + ' 🕓\n'; continue; }
+    if (lvl === 0 && !k.active) { const n = (await kids(k.id)).length; out += '• ' + esc(k.name) + ' 🕓' + (n ? ' · ' + n + ' ta tuman' : '') + '\n'; continue; }
     out += '  '.repeat(lvl) + '• ' + esc(k.name) + ' <i>(' + k.kind + ')</i>' + (k.active ? '' : ' 🕓') + '\n' + await regTree(k.id, lvl + 1);
   }
   return out;
@@ -707,8 +719,9 @@ async function onCallback(q) {
       return edit(chat, mid, '✅ Qayerga: <b>' + esc(await rname(rid)) + '</b>\n\n' + sc.text, { reply_markup: sc.kb });
     }
     if (mode === 'fm' || mode === 'pf') {
-      sd.rid = rid; await setSt(chat, 'p_addr', sd);
-      await edit(chat, mid, '✅ Qayerdan: <b>' + esc(await rname(rid)) + '</b>\n🏁 Qayerga: <b>' + esc(await rname(sd.to_id)) + '</b>');
+      if (mode === 'pf' && node.kind === 'tuman' && node.parent_id) { sd.rid = node.parent_id; sd.sub = node.name; } else { sd.rid = rid; delete sd.sub; }
+      await setSt(chat, 'p_addr', sd);
+      await edit(chat, mid, '✅ Qayerdan: <b>' + esc(await rname(sd.rid)) + (sd.sub ? ' › ' + esc(sd.sub) : '') + '</b>\n🏁 Qayerga: <b>' + esc(await rname(sd.to_id)) + '</b>');
       return askAddr(chat, '');
     }
     if (mode === 'dm' || mode === 'dv') {
