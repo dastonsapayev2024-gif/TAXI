@@ -265,8 +265,8 @@ async function showMe(chat) {
   if (!PAYON) money = '🎁 Hozir xizmat <b>bepul</b>';
   else money = '💰 Tarif: <b>' + planName(pl) + '</b> · ' + fmt(await priceOf(pl)) + ' so‘m/oy\n' + (termOn(d) ? '✅ Amal qiladi: <b>' + fdate(d.paid_until) + '</b> gacha (' + daysLeft(d.paid_until) + ' kun)' : '⚠️ To‘lov yo‘q yoki muddati tugagan') +
     (pl === 'mahalla' ? '\n🔒 Viloyat taksisi yopiq. «' + B.line + '» orqali ochishingiz mumkin.' : '');
-  return home(chat, '🚕 <b>' + esc(d.name) + '</b>\n📞 ' + esc(showPhone(d.phone)) + '\n🚗 ' + esc(d.car) + '\n🏷 Hozirgi liniya: ' + (d.kind === 'viloyat' ? 'Viloyat taksisi' : 'Mahalla taksisi') + '\n📍 Liniyangiz: <b>' + rn +
-    '</b>\n' + money + '\n' + (d.online && isPaid(d) ? '🟢 Liniyadasiz' : '🔴 Liniyada emassiz'));
+  return send(chat, '🚕 <b>' + esc(d.name) + '</b>\n📞 ' + esc(showPhone(d.phone)) + '\n🚗 ' + esc(d.car) + '\n🏷 Hozirgi liniya: ' + (d.kind === 'viloyat' ? 'Viloyat taksisi' : 'Mahalla taksisi') + '\n📍 Liniyangiz: <b>' + rn +
+    '</b>\n' + money + '\n' + (d.online && isPaid(d) ? '🟢 Liniyadasiz' : '🔴 Liniyada emassiz'), { reply_markup: { inline_keyboard: [[{ text: '🚗 Mashinani o‘zgartirish', callback_data: 'ec:c' }], [{ text: '📞 Telefonni o‘zgartirish', callback_data: 'ec:p' }]] } });
 }
 async function goOnline(chat, on) {
   const d = await getDriver(chat);
@@ -718,6 +718,13 @@ async function onMessage(m) {
     d.phone = ph; await setSt(chat, 'd_car', d);
     return send(chat, '3/4 🚗 Mashinangiz: markasi, rangi, davlat raqami. Masalan:\n<code>Cobalt, oq, 01 A 123 BC</code>', { reply_markup: { keyboard: [[{ text: B.cancel }]], resize_keyboard: true } });
   }
+  if (st === 'd_ecar' || st === 'd_ephone') {
+    const car = st === 'd_ecar';
+    const v = car ? t.slice(0, 60) : normPhone(m.contact ? m.contact.phone_number : t);
+    if (car ? t.length < 6 : !v) return send(chat, car ? 'Juda qisqa. Marka, rang va raqamni yozing.' : 'Raqam noto‘g‘ri. Masalan: <code>90 123 45 67</code>');
+    await db.q('update ln_drivers set ' + (car ? 'car' : 'phone') + '=$2 where tg_id=$1', [chat, v]); await clrSt(chat);
+    return home(chat, '✅ Saqlandi' + (car ? ': <b>' + esc(v) + '</b>' : '.') + '\nYangi ma’lumot yo‘lovchilarga shu zahoti ko‘rinadi.');
+  }
   if (st === 'd_car') {
     if (t.length < 6) return send(chat, 'Juda qisqa. Marka, rang va raqamni yozing.');
     d.car = t.slice(0, 60); await setSt(chat, 'd_kind', d);
@@ -799,6 +806,12 @@ async function onCallback(q) {
     await setSt(chat, 'd_reg', sd);
     const s = await regScreen(d[1] === 'm' ? 'dm' : 'dv', 0);
     return edit(chat, mid, s.text, { reply_markup: s.kb });
+  }
+  if (k === 'ec') {
+    await answer(q);
+    if (!(await getDriver(chat))) return home(chat, 'Avval «' + B.drv + '» orqali ro‘yxatdan o‘ting.');
+    const car = d[1] === 'c'; await setSt(chat, car ? 'd_ecar' : 'd_ephone', {});
+    return send(chat, car ? '🚗 Yangi mashina ma’lumoti: markasi, rangi, davlat raqami.\nMasalan: <code>Cobalt, oq, 01 A 123 BC</code>' : '📞 Yangi telefon raqamingizni yozing.\nMasalan: <code>90 123 45 67</code>', { reply_markup: { keyboard: [[{ text: B.cancel }]], resize_keyboard: true } });
   }
   if (k === 'pp') return payPick(q);
   if (k === 'kc') { // liniyani o'zgartirishda taksi turini tanlash
@@ -900,7 +913,7 @@ async function ensureMenu(force) {
     if (r && r.ok) await setSetting('menu_off', '2'); else menuDone = false;
   } catch (e) { menuDone = false; }
 }
-const CB = new Set(['tx', 'pk', 'kd', 'rg', 'rs', 'pw', 'la', 'ld', 'lc', 'pc', 'pr', 'rt', 'kc', 'pp', 'pa', 'am', 'ia', 'on', 'ch', 'bc', 'bk', 'dc']);
+const CB = new Set(['tx', 'pk', 'kd', 'rg', 'rs', 'pw', 'la', 'ld', 'lc', 'pc', 'pr', 'rt', 'kc', 'ec', 'pp', 'pa', 'am', 'ia', 'on', 'ch', 'bc', 'bk', 'dc']);
 const menuChats = new Set();
 async function chatMenu(chat) {
   if (!chat || menuChats.has(chat)) return;
