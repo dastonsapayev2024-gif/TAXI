@@ -32,7 +32,7 @@ async function loadPay() { PAYON = (await setting('pay_on', '0')) === '1'; }
 // ustunlar: ln_drivers.plan (qaysi tarifga to'lagan), ln_pay.plan/upg. _db.js bilan bir xil qulf, shuning uchun parallel ishga tushsa ham xavfsiz.
 let subReady = null;
 function ensureSub() {
-  if (!subReady) subReady = db.q("select pg_advisory_xact_lock(7313001); alter table ln_drivers add column if not exists plan text; update ln_drivers set plan = case when kind='viloyat' then 'viloyat' else 'mahalla' end where plan is null; alter table ln_pay add column if not exists plan text; alter table ln_pay add column if not exists upg boolean not null default false;").catch(e => { subReady = null; throw e; });
+  if (!subReady) subReady = db.q("select pg_advisory_xact_lock(7313001); alter table ln_drivers add column if not exists plan text; update ln_drivers set plan = case when kind='viloyat' then 'viloyat' else 'mahalla' end where plan is null; alter table ln_pay add column if not exists plan text; alter table ln_pay add column if not exists upg boolean not null default false; create table if not exists ln_sess(id serial primary key, driver_id bigint not null, t0 timestamptz not null default now(), t1 timestamptz); create index if not exists ln_sess_d on ln_sess(driver_id, t0);").catch(e => { subReady = null; throw e; });
   return subReady;
 }
 async function freeEnd() { const v = await setting('free_until', ''); const t = v ? new Date(v).getTime() : 0; return t > Date.now() ? new Date(t) : null; }
@@ -47,6 +47,14 @@ const nameOf = u => [u.first_name, u.last_name].filter(Boolean).join(' ').slice(
 const termOn = d => !!(d && d.paid_until && new Date(d.paid_until).getTime() > Date.now());   // haqiqiy to'langan muddat bormi
 const isPaid = d => !!d && (!PAYON || termOn(d));                                                // ishlash huquqi (bepul rejimda hamma)
 const canViloyat = d => !!d && (!PAYON || d.plan === 'viloyat');                                  // viloyat taksisi ochiqmi
+async function sessClose(id) { await db.q("update ln_sess set t1=least(now(), t0+interval '" + HOURS_ONLINE + " hours') where driver_id=$1 and t1 is null", [id]); }
+async function sessOpen(id) { await sessClose(id); await db.q('insert into ln_sess(driver_id) values($1)', [id]); }
+const END_SQL = "coalesce(s.t1, least(now(), s.t0 + interval '" + HOURS_ONLINE + " hours'))";
+async function hoursSince(id, since) {
+  const r = await db.q('select coalesce(sum(extract(epoch from (' + END_SQL + ' - greatest(s.t0, $2::timestamptz))))/3600, 0) h from ln_sess s where s.driver_id=$1 and ' + END_SQL + ' > $2::timestamptz', [id, since]);
+  return Number(r.rows[0].h) || 0;
+}
+const fh = h => h >= 10 ? Math.round(h) + ' soat' : h >= 1 ? h.toFixed(1) + ' soat' : Math.round(h * 60) + ' daq';
 const paidSql = a => PAYON ? '(' + (a ? a + '.' : '') + 'paid_until > now())' : 'true';           // SQL uchun isPaid
 const fdate = t => new Date(t).toLocaleDateString('ru-RU', { timeZone: 'Asia/Tashkent' });
 const daysLeft = t => Math.max(0, Math.ceil((new Date(t).getTime() - Date.now()) / 86400000));
@@ -276,10 +284,10 @@ async function goOnline(chat, on) {
     if (!isPaid(d)) return home(chat, '⚠️ Liniyaga chiqish uchun oylik to‘lov kerak. «' + B.pay + '» ni bosing.');
     if (PAYON && d.kind === 'viloyat' && !canViloyat(d)) { await home(chat, '🔒 Viloyat taksisi uchun <b>Viloyat + Mahalla</b> tarifi kerak.'); return startPay(chat); }
     if (!d.region_id || !d.to_id) return startChange(chat);
-    await db.q('update ln_drivers set online=true, online_at=now() where tg_id=$1', [chat]);
+    await db.q('update ln_drivers set online=true, online_at=now() where tg_id=$1', [chat]); await sessOpen(chat);
     return home(chat, '🟢 Siz liniyadasiz: <b>' + (await routeOf(d.region_id, d.to_id)) + '</b>\nBuyurtma kelsa, shu yerga xabar keladi.\n\n⚠️ Xizmatni tugatgandan keyin liniyani o‘chirib qo‘yish esingizdan chiqmasin. Unutsangiz, yoqilgandan ' + HOURS_ONLINE + ' soat o‘tgach o‘zi avto chiqadi. Xohlagan paytingizda yana yoqishingiz mumkin.\n\nBoshqa joyga o‘tish: «' + B.line + '».');
   }
-  await db.q('update ln_drivers set online=false where tg_id=$1', [chat]);
+  await db.q('update ln_drivers set online=false where tg_id=$1', [chat]); await sessClose(chat);
   return home(chat, '🔴 Liniyadan chiqdingiz.');
 }
 async function startChange(chat) {
@@ -434,10 +442,12 @@ async function passengerCancel(q) {
 
 // ---------- admin ----------
 const ADM_KB = { inline_keyboard: [
-  [{ text: '💳 To‘lovlar', callback_data: 'am:pay' }, { text: '👥 Haydovchilar', callback_data: 'am:drv:0' }],
-  [{ text: '🟢 Liniyadagilar', callback_data: 'am:lines' }, { text: '📊 Statistika', callback_data: 'am:st' }],
-  [{ text: '✉️ Xabar yuborish', callback_data: 'am:bc' }, { text: '⚙️ Sozlamalar', callback_data: 'am:set' }],
-  [{ text: '🗺 Hududlar', callback_data: 'am:reg' }, { text: '✏️ Matnlar', callback_data: 'am:tx' }]] };
+  [{ text: '📊 Statistika', callback_data: 'am:st' }, { text: '📈 Hisobot (soat, buyurtma)', callback_data: 'am:rep:d' }],
+  [{ text: '👥 Haydovchilar', callback_data: 'am:drv:0' }, { text: '🟢 Liniyadagilar', callback_data: 'am:lines' }],
+  [{ text: '💳 Kutilayotgan to‘lovlar', callback_data: 'am:pay' }, { text: '⚙️ Sozlamalar', callback_data: 'am:set' }],
+  [{ text: '✉️ Xabar yuborish', callback_data: 'am:bc' }, { text: '🔎 Tekshirish', callback_data: 'am:chk' }],
+  [{ text: '🗺 Hududlar', callback_data: 'am:reg' }, { text: '✏️ Tugma nomlari va matnlar', callback_data: 'am:tx' }],
+  [{ text: '📖 Yordam: nima qachon bosiladi', callback_data: 'am:help' }]] };
 async function regTree(pid, lvl) {
   let out = '';
   for (const k of await kids(pid || null)) {
@@ -453,13 +463,38 @@ async function driverCard(chat, id) {
   const text = '🚕 <b>' + esc(d.name) + '</b> · <code>' + d.tg_id + '</code>' + (d.username ? ' · @' + esc(d.username) : '') + '\n📞 ' + esc(showPhone(d.phone)) + '\n🚗 ' + esc(d.car) +
     '\n🏷 Tarif: ' + planName(d.plan === 'viloyat' ? 'viloyat' : 'mahalla') + ' · liniya: ' + (d.kind === 'viloyat' ? 'viloyat' : 'mahalla') + '\n📍 ' + (d.region_id && d.to_id ? await routeOf(d.region_id, d.to_id) : '—') +
     '\n💰 ' + (!PAYON ? '🎁 bepul rejim' : termOn(d) ? '✅ ' + fdate(d.paid_until) + ' gacha (' + daysLeft(d.paid_until) + ' kun)' : '❌ to‘lov yo‘q') + '\n' + (d.online ? '🟢 Liniyada' : '🔴 Liniyada emas') + (d.blocked ? '\n⛔ <b>Bloklangan</b>' : '') +
-    '\n📦 Buyurtmalar: ' + n.done + ' bajarilgan / ' + n.tot + ' jami' + (n.rn > 0 ? '\n⭐ Baho: ' + n.ra + ' (' + n.rn + ' ta)' : '') + '\n🗓 Ro‘yxatdan: ' + fdate(d.created);
+    '\n📦 Buyurtmalar: ' + n.done + ' bajarilgan / ' + n.tot + ' jami' + (n.rn > 0 ? '\n⭐ Baho: ' + n.ra + ' (' + n.rn + ' ta)' : '') + '\n⏱ Liniyada: bugun <b>' + fh(await hoursSince(id, new Date(new Date().setHours(0, 0, 0, 0)).toISOString())) + '</b> · 7 kunda <b>' + fh(await hoursSince(id, new Date(Date.now() - 7 * 864e5).toISOString())) + '</b> · jami <b>' + fh(await hoursSince(id, '1970-01-01')) + '</b>\n🗓 Ro‘yxatdan: ' + fdate(d.created);
   return send(chat, text, { reply_markup: { inline_keyboard: [
     [d.blocked ? { text: '✅ Blokdan olish', callback_data: 'dc:ubl:' + id } : { text: '⛔ Bloklash', callback_data: 'dc:blk:' + id }],
     [{ text: '➕ +30 kun', callback_data: 'dc:add:' + id }, { text: '⏹ To‘xtatish', callback_data: 'dc:off:' + id }],
     [{ text: '✉️ Xabar yuborish', callback_data: 'dc:msg:' + id }]] } });
 }
+const PERIODS = { d: ['Bugun', () => new Date(new Date().setHours(0, 0, 0, 0)).toISOString()], w: ['7 kun', () => new Date(Date.now() - 7 * 864e5).toISOString()], m: ['30 kun', () => new Date(Date.now() - 30 * 864e5).toISOString()], a: ['Hammasi', () => '1970-01-01'] };
+async function adminReport(chat, p) {
+  const P = PERIODS[p] || PERIODS.d, since = P[1]();
+  const r = (await db.q("select d.tg_id, d.name, d.kind, d.online, d.blocked, (select count(*) from ln_orders o where o.driver_id=d.tg_id and o.taken_at>=$1::timestamptz)::int taken, (select count(*) from ln_orders o where o.driver_id=d.tg_id and o.status='done' and o.done_at>=$1::timestamptz)::int done, coalesce((select sum(extract(epoch from (" + END_SQL + " - greatest(s.t0, $1::timestamptz))))/3600 from ln_sess s where s.driver_id=d.tg_id and " + END_SQL + " > $1::timestamptz), 0)::float hrs from ln_drivers d order by taken desc, hrs desc, d.created limit 15", [since])).rows;
+  const tot = (await db.q("select count(*)::int taken, count(*) filter (where status='done')::int done from ln_orders where taken_at>=$1::timestamptz", [since])).rows[0];
+  const act = r.filter(x => x.taken > 0 || x.hrs > 0).length;
+  const lines = r.filter(x => x.taken > 0 || x.hrs > 0).map((x, i) => (i + 1) + '. ' + (x.online ? '🟢' : '⚪️') + ' <b>' + esc(x.name) + '</b> · ' + (x.kind === 'viloyat' ? 'viloyat' : 'mahalla') + '\n   📦 ' + x.taken + ' ta oldi, ' + x.done + ' ta bajardi · ⏱ ' + fh(x.hrs) + ' · /h' + x.tg_id);
+  const kb = [Object.keys(PERIODS).map(k => ({ text: (k === p ? '✅ ' : '') + PERIODS[k][0], callback_data: 'am:rep:' + k }))];
+  return send(chat, '📈 <b>Hisobot: ' + P[0] + '</b>\n\n📦 Haydovchilar jami olgan buyurtma: <b>' + tot.taken + '</b>, bajarilgan: <b>' + tot.done + '</b>\n👷 Ishlagan haydovchi: <b>' + act + '</b>\n\n' + (lines.join('\n') || 'Bu davrda ma’lumot yo‘q.') + '\n\n⏱ soat = liniyada turgan vaqt. 🟢 hozir liniyada.\nBatafsil: haydovchi yonidagi /h raqamini bosing.', { reply_markup: { inline_keyboard: kb } });
+}
+const HELP = [
+  '📖 <b>Admin qo‘llanma (1/2)</b>\n\n<b>💳 Pullik / 🎁 Bepul</b>\n⚙️ Sozlamalar → birinchi tugma. Hozir qaysi rejim ekanini shu yerda ko‘rasiz. Bepulda haydovchilarga to‘lov tugmasi ko‘rinmaydi.\n\n<b>Qachon nima qilaman</b>\n• Haydovchi to‘lov chekini yubordi → 💳 Kutilayotgan to‘lovlar → ✅ Tasdiqlash yoki ❌ Rad.\n• Narxni o‘zgartirish → ⚙️ Sozlamalar → 🏘 Mahalla narxi / 🛣 Viloyat narxi → raqam yozing.\n• Oylik muddat necha kun → ⚙️ Sozlamalar → 📅 Muddat.\n• To‘lov kartasi → ⚙️ Sozlamalar → 💳 Karta.\n• Haydovchilarga bepul sinov berish → ⚙️ Sozlamalar → 🎁 Sinov muddati (masalan 15 kun).\n• Birinchi marta pullikni yoqish: avval sinov muddati bering, keyin pullikni yoqing.',
+  '📖 <b>Admin qo‘llanma (2/2)</b>\n\n• Kim ishlayapti, nechta buyurtma oldi, necha soat liniyada bo‘ldi → 📈 Hisobot (bugun / 7 kun / 30 kun / hammasi).\n• Bitta haydovchini ko‘rish → 👥 Haydovchilar → ismi yonidagi /h raqamini bosing. U yerda: ⛔ bloklash, ➕ +30 kun, ⏹ to‘xtatish, ✉️ xabar.\n• Hozir liniyada kim bor → 🟢 Liniyadagilar.\n• Hammaga yoki haydovchilarga xabar → ✉️ Xabar yuborish.\n• Tugma yozuvi va savollar matnini o‘zgartirish → ✏️ Tugma nomlari va matnlar.\n• Yangi tuman/mahalla qo‘shish, yopish → 🗺 Hududlar.\n• Salomlashish matni → ⚙️ Sozlamalar → 👋 Salom matni.\n• Nimadir ishlamayotgandek → 🔎 Tekshirish (nosoz haydovchilarni topadi).\n• O‘zingiz botni haydovchi sifatida sinash → ⚙️ Sozlamalar → 🧪 Sinov.\n\n💡 Yo‘lovchilar uchun hamma narsa doim bepul.'
+];
+const ASK = {
+  tekin: { pre: '/tekin ', re: /^\d{1,3}$/, q: '🎁 Necha kun bepul sinov berilsin? Faqat raqam, masalan: <code>15</code>', ex: '15' },
+  salom: { pre: '/salom ', re: /^[\s\S]{3,600}$/, q: '👋 Yangi salomlashish matnini yozing (/start bosganda chiqadi):', ex: 'Assalomu alaykum!' },
+  hudud: { pre: '/hudud ', re: /^.{2,}$/, q: '➕ Qo‘shiladigan hududni yozing.\nMasalan: <code>Xorazm &gt; Shovot</code> yoki <code>Xorazm &gt; Shovot &gt; Yangi mahalla</code>', ex: 'Xorazm > Shovot' },
+  nom: { pre: '/nom ', re: /^.+>.+$/, q: '✏️ Hudud nomini o‘zgartirish. Yozing: <code>Eski nom &gt; Yangi nom</code>', ex: 'Eski nom > Yangi nom' },
+  hon: { pre: '/hudud_on ', re: /^.{2,}$/, q: '🟢 Qaysi hududni ochamiz (ishga tushiramiz)? Nomini yozing:', ex: 'Buxoro' },
+  hoff: { pre: '/hudud_off ', re: /^.{2,}$/, q: '🕓 Qaysi hududni «tez kunda» holatiga o‘tkazamiz? Nomini yozing:', ex: 'Buxoro' }
+};
 async function adminMenu(chat, what, arg) {
+  if (what === 'rep') return adminReport(chat, arg);
+  if (what === 'help') { for (const h of HELP) await send(chat, h); return; }
+  if (what === 'chk') return adminCmd(chat, '/tekshir');
   if (what === 'pay') {
     const r = (await db.q("select p.*, d.name, d.phone, d.kind from ln_pay p join ln_drivers d on d.tg_id=p.driver_id where p.status='pending' order by p.id limit 10")).rows;
     if (!r.length) return send(chat, '✅ Kutilayotgan to‘lov yo‘q.');
@@ -499,9 +534,10 @@ async function adminMenu(chat, what, arg) {
     const txt0 = (chat, '⚙️ <b>Sozlamalar</b>\nRejim: ' + (PAYON ? '💳 <b>PULLIK</b>' : '🎁 <b>BEPUL</b> (hamma haydovchi bepul)') + '\n🏘 Mahalla taksisi: <b>' + fmt(await priceOf('mahalla')) + '</b> so‘m/oy\n🛣 Viloyat + Mahalla: <b>' + fmt(await priceOf('viloyat')) + '</b> so‘m/oy\n⬆️ Mahalladan viloyatga o‘tish: <b>' + fmt(await upgPrice()) + '</b> so‘m\nMuddat: ' + (await payDays()) + ' kun\nKarta: <code>' + esc(await setting('card', '— kiritilmagan —')) + '</code>\n🚖 Yo‘lovchilar: doim bepul\n\n' +
       '<b>O‘zgartirish:</b>\n<code>/pullik</code> — pullik rejimni yoqish\n<code>/bepul</code> — hamma uchun bepul\n<code>/karta 8600 1234 5678 9012 Ism</code>\n<code>/narx_m 20000</code> — Mahalla narxi\n<code>/narx_v 30000</code> — Viloyat + Mahalla narxi\n<code>/kun 30</code> — muddat\n<code>/salom Matn</code> — bosh xabar matni\n<code>/yoq ID</code> yoki <code>/yoq ID 15</code> — haydovchini yoqish\n<code>/toxtat ID</code> — to‘xtatish\n<code>/blok ID</code>, <code>/blokdan ID</code> — bloklash\n<code>/xabar ID matn</code> — bitta odamga xabar');
     return send(chat, txt0, { reply_markup: { inline_keyboard: [
-      [{ text: PAYON ? '🎁 Bepul qilish (hamma uchun)' : '💳 Pullikni yoqish (hamma ko‘radi)', callback_data: 'am:pay' }],
+      [{ text: PAYON ? '🎁 Bepul qilish (hamma uchun)' : '💳 Pullikni yoqish (hamma ko‘radi)', callback_data: 'am:mode' }],
       [{ text: '🏘 Mahalla narxi: ' + fmt(await priceOf('mahalla')), callback_data: 'am:np:m' }, { text: '🛣 Viloyat narxi: ' + fmt(await priceOf('viloyat')), callback_data: 'am:np:v' }],
       [{ text: '📅 Muddat: ' + (await payDays()) + ' kun', callback_data: 'am:np:d' }, { text: '💳 Karta', callback_data: 'am:np:c' }],
+      [{ text: '🎁 Sinov muddati berish', callback_data: 'am:ask:tekin' }, { text: '👋 Salom matni', callback_data: 'am:ask:salom' }],
       [{ text: '✏️ Tugma nomlari va matnlar', callback_data: 'am:tx' }],
       [{ text: '🧪 Sinov: o‘zimni qayta ro‘yxatdan o‘tkazish', callback_data: 'am:rst' }]] } });
   }
@@ -511,7 +547,7 @@ async function adminMenu(chat, what, arg) {
     return send(chat, '✏️ <b>Matnlar</b>\nO‘zgartirmoqchi bo‘lgan matnni bosing. ✏️ belgisi — o‘zgartirilgan.\n\nO‘zgartirgach foydalanuvchilar tugmalar yangilanishi uchun botga /start yozishi kerak.', { reply_markup: { inline_keyboard: rows } });
   }
   if (what === 'reg') {
-    return send(chat, '🗺 <b>Hududlar</b>\n\n' + (await regTree(null, 0)) + '\n🕓 — «tez kunda» (odamlar bossa shunday xabar oladi)\n\n<b>Buyruqlar:</b>\n<code>/hudud Xorazm &gt; Shovot</code> — tuman qo‘shish\n<code>/hudud Xorazm &gt; Shovot &gt; Yangi mahalla</code>\n<code>/hudud Buxoro</code> — yangi viloyat\n<code>/tekshir</code> — haydovchilar nega buyurtma olmayotganini ko‘rsatadi\n<code>/nom Eski nom &gt; Yangi nom</code> — nomini o‘zgartirish\n<code>/hudud_on Buxoro</code> — ishga tushirish\n<code>/hudud_off Buxoro</code> — «tez kunda» holatiga qaytarish');
+    return send(chat, '🗺 <b>Hududlar</b>\n\n' + (await regTree(null, 0)) + '\n🕓 — «tez kunda» (odamlar bossa shunday xabar oladi)\n\n<b>Buyruqlar:</b>\n<code>/hudud Xorazm &gt; Shovot</code> — tuman qo‘shish\n<code>/hudud Xorazm &gt; Shovot &gt; Yangi mahalla</code>\n<code>/hudud Buxoro</code> — yangi viloyat\n<code>/tekshir</code> — haydovchilar nega buyurtma olmayotganini ko‘rsatadi\n<code>/nom Eski nom &gt; Yangi nom</code> — nomini o‘zgartirish\n<code>/hudud_on Buxoro</code> — ishga tushirish\n<code>/hudud_off Buxoro</code> — «tez kunda» holatiga qaytarish', { reply_markup: { inline_keyboard: [[{ text: '➕ Hudud qo‘shish', callback_data: 'am:ask:hudud' }, { text: '✏️ Nomini o‘zgartirish', callback_data: 'am:ask:nom' }], [{ text: '🟢 Ochish', callback_data: 'am:ask:hon' }, { text: '🕓 «Tez kunda» qilish', callback_data: 'am:ask:hoff' }]] } });
   }
 }
 async function sendCheque(admChat, p, name, phone, kind) {
@@ -545,7 +581,7 @@ async function payDecide(q) {
   }
   let note = '';
   if (plan === 'mahalla' && dr.kind === 'viloyat') {   // viloyat liniyasidan mahalla tarifiga tushdi: liniyani qayta tanlaydi
-    await db.q("update ln_drivers set kind='mahalla', region_id=null, to_id=null, online=false where tg_id=$1", [p.driver_id]);
+    await db.q("update ln_drivers set kind='mahalla', region_id=null, to_id=null, online=false where tg_id=$1", [p.driver_id]); await sessClose(p.driver_id);
     note = '\n\n⚠️ Tarifingiz <b>Mahalla</b>, shuning uchun liniyangiz mahalla taksisiga o‘tdi. «📍 Liniyani o‘zgartirish» orqali yangi liniya tanlang.';
   }
   await db.q('update ln_drivers set plan=$2 where tg_id=$1', [p.driver_id, plan]);
@@ -555,7 +591,7 @@ async function payDecide(q) {
 }
 async function blockUser(id, on) {
   await db.q('update ln_users set blocked=$2 where tg_id=$1', [id, on]);
-  await db.q(on ? 'update ln_drivers set blocked=true, online=false where tg_id=$1' : 'update ln_drivers set blocked=false where tg_id=$1', [id]);
+  await db.q(on ? 'update ln_drivers set blocked=true, online=false where tg_id=$1' : 'update ln_drivers set blocked=false where tg_id=$1', [id]); if (on) await sessClose(id);
 }
 async function recipients(t) {
   const sql = t === 'drv' ? 'select tg_id from ln_drivers where blocked=false'
@@ -602,7 +638,7 @@ async function adminCmd(chat, t) {
     return send(chat, '✅ Yoqildi: ' + fdate(u.paid_until) + ' gacha');
   }
   if ((m = t.match(/^\/toxtat\s+(\d{4,15})$/))) {
-    const r = await db.q('update ln_drivers set paid_until=now(), online=false where tg_id=$1 returning tg_id', [m[1]]);
+    const r = await db.q('update ln_drivers set paid_until=now(), online=false where tg_id=$1 returning tg_id', [m[1]]); await sessClose(m[1]);
     return send(chat, r.rows[0] ? '⛔ To‘xtatildi' : '❌ Haydovchi topilmadi');
   }
   if ((m = t.match(/^\/(blok|blokdan)\s+(\d{4,15})$/))) {
@@ -681,6 +717,14 @@ async function onMessage(m) {
   if (t === B.adm && admin) return send(chat, '🛠 <b>Admin paneli</b>', { reply_markup: ADM_KB });
 
   const { st, d } = await getSt(chat);
+  if (admin && st === 'a_cmd') {
+    await clrSt(chat);
+    const a = ASK[d.k];
+    if (!a || t === B.cancel) return home(chat, 'Bekor qilindi.');
+    if (!a.re.test(t.trim())) return home(chat, '❌ Format noto‘g‘ri. Masalan: ' + a.ex + '\nQayta urinish: Admin panelda shu tugmani bosing.');
+    await home(chat, '⏳');
+    return adminCmd(chat, a.pre + t.trim());
+  }
   if (admin && st === 'a_np') {
     await clrSt(chat);
     const w = d.w, v = t.replace(/[\s,]/g, '');
@@ -880,7 +924,8 @@ async function onCallback(q) {
   if (k === 'am' || k === 'bc' || k === 'bk' || k === 'dc') {
     if (!admin) return answer(q, 'Faqat admin', true);
     await answer(q);
-    if (k === 'am' && d[1] === 'pay') { await adminCmd(chat, PAYON ? '/bepul' : '/pullik'); return adminMenu(chat, 'set'); }
+    if (k === 'am' && d[1] === 'mode') { await adminCmd(chat, PAYON ? '/bepul' : '/pullik'); return adminMenu(chat, 'set'); }
+    if (k === 'am' && d[1] === 'ask') { const a = ASK[d[2]]; if (!a) return; await setSt(chat, 'a_cmd', { k: d[2] }); return send(chat, a.q + '\n\n(Bekor qilish: «' + B.cancel + '»)', { reply_markup: { keyboard: [[{ text: B.cancel }]], resize_keyboard: true } }); }
     if (k === 'am' && d[1] === 'np') { const nm = { m: 'Mahalla taksisi narxi (so‘m/oy)', v: 'Viloyat + Mahalla narxi (so‘m/oy)', d: 'Muddat (kun)', c: 'Karta (raqam va ism)' }[d[2]]; if (!nm) return; await setSt(chat, 'a_np', { w: d[2] }); return send(chat, '✏️ <b>' + nm + '</b>\n' + (d[2] === 'c' ? 'Masalan: <code>8600 1234 5678 9012 Ism</code>' : 'Faqat raqam yozing, masalan: <code>' + (d[2] === 'd' ? '30' : '25000') + '</code>')); }
     if (k === 'am' && d[1] === 'rst') { await db.q('delete from ln_drivers where tg_id=$1', [chat]); await clrSt(chat); return home(chat, '🧪 Haydovchi ro‘yxatingiz o‘chirildi. Endi «' + B.drv + '» ni bosib, boshidan sinab ko‘ring.'); }
     if (k === 'am') return adminMenu(chat, d[1], d[2]);
@@ -897,7 +942,7 @@ async function onCallback(q) {
       const id = d[2];
       if (d[1] === 'blk' || d[1] === 'ubl') { if (isAdmin(id)) return send(chat, '❌ Adminni bloklab bo‘lmaydi.'); await blockUser(id, d[1] === 'blk'); return driverCard(chat, id); }
       if (d[1] === 'add') { const u = await activate(id, await payDays()); if (u) await quiet(send(id, '✅ Hisobingiz uzaytirildi: <b>' + fdate(u.paid_until) + '</b> gacha.')); return driverCard(chat, id); }
-      if (d[1] === 'off') { await db.q('update ln_drivers set paid_until=now(), online=false where tg_id=$1', [id]); return driverCard(chat, id); }
+      if (d[1] === 'off') { await db.q('update ln_drivers set paid_until=now(), online=false where tg_id=$1', [id]); await sessClose(id); return driverCard(chat, id); }
       if (d[1] === 'msg') { await setSt(chat, 'a_one', { id }); return send(chat, '✍️ Shu haydovchiga xabar matnini yozing (bekor: «' + B.cancel + '»):', { reply_markup: { keyboard: [[{ text: B.cancel }]], resize_keyboard: true } }); }
     }
   }
