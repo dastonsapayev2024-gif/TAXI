@@ -122,7 +122,12 @@ function loadOrders(){if(!ME||!ME.registered||ME.blocked)return;return api({acti
  ORD=j.orders;if(ME){ME.balance=j.balance;ME.free=j.free}
  if(!document.activeElement||document.activeElement.tagName!=='INPUT')render()}).catch(function(){})}
 
-loadMe().then(function(){loadOrders();orderTimer=setInterval(loadOrders,4000);meTimer=setInterval(loadMe,10000)});
-document.addEventListener('visibilitychange',function(){if(!document.hidden){loadMe();loadOrders()}});
+var IDLE=120000,lastAct=Date.now(),idle=false,idleT=null;
+function startT(){stopT();orderTimer=setInterval(loadOrders,8000);meTimer=setInterval(loadMe,20000);idleT=setInterval(function(){if(!idle&&Date.now()-lastAct>IDLE){idle=true;stopT();clearInterval(idleT)}},10000)}
+function stopT(){clearInterval(orderTimer);clearInterval(meTimer);clearInterval(idleT)}
+function act(){lastAct=Date.now();if(idle&&!document.hidden){idle=false;loadMe();loadOrders();startT()}}
+['touchstart','click','scroll','keydown','mousemove'].forEach(function(ev){document.addEventListener(ev,act,{passive:true})});
+loadMe().then(function(){loadOrders();if(!document.hidden)startT()});
+document.addEventListener('visibilitychange',function(){if(document.hidden){stopT()}else{lastAct=Date.now();idle=false;loadMe();loadOrders();startT()}});
 })();
 </script></body></html>
