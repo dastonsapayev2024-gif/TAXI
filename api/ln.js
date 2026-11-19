@@ -22,7 +22,19 @@ const B = {
 // ---------- sozlamalar ----------
 async function setting(k, def) { const r = await db.q('select val from settings where key=$1', [k]); return r.rows[0] ? r.rows[0].val : def; }
 async function setSetting(k, v) { await db.q('insert into settings(key,val) values($1,$2) on conflict (key) do update set val=excluded.val, updated=now()', [k, String(v)]); }
-async function priceOf(kind) { return Number(await setting(kind === 'viloyat' ? 'lp_v' : 'lp_m', kind === 'viloyat' ? '40000' : '20000')) || 0; }
+// Tariflar: 'mahalla' = faqat mahalla taksisi; 'viloyat' = Viloyat + Mahalla (ikkalasi ham)
+async function priceOf(kind) { return Number(await setting(kind === 'viloyat' ? 'lp_v' : 'lp_m', kind === 'viloyat' ? '30000' : '20000')) || 0; }
+const upgPrice = async () => Math.max(0, (await priceOf('viloyat')) - (await priceOf('mahalla')));   // mahalla -> viloyat qo'shimcha to'lovi
+const planName = k => k === 'viloyat' ? 'Viloyat + Mahalla taksisi' : 'Mahalla taksisi';
+// Pullik rejim: admin /pullik bilan yoqadi. O'chiq bo'lsa (hozirgi holat) hamma haydovchi bepul va cheklovsiz ishlaydi.
+let PAYON = false;
+async function loadPay() { PAYON = (await setting('pay_on', '0')) === '1'; }
+// ustunlar: ln_drivers.plan (qaysi tarifga to'lagan), ln_pay.plan/upg. _db.js bilan bir xil qulf, shuning uchun parallel ishga tushsa ham xavfsiz.
+let subReady = null;
+function ensureSub() {
+  if (!subReady) subReady = db.q("select pg_advisory_xact_lock(7313001); alter table ln_drivers add column if not exists plan text; update ln_drivers set plan = case when kind='viloyat' then 'viloyat' else 'mahalla' end where plan is null; alter table ln_pay add column if not exists plan text; alter table ln_pay add column if not exists upg boolean not null default false;").catch(e => { subReady = null; throw e; });
+  return subReady;
+}
 async function freeEnd() { const v = await setting('free_until', ''); const t = v ? new Date(v).getTime() : 0; return t > Date.now() ? new Date(t) : null; }
 async function payDays() { return Math.max(1, Number(await setting('lp_days', '30')) || 30); }
 
@@ -32,7 +44,10 @@ const setSt = (id, st, d) => db.q('insert into ln_state(tg_id,st,data) values($1
 const clrSt = id => setSt(id, '', {});
 const getDriver = async id => (await db.q('select * from ln_drivers where tg_id=$1', [id])).rows[0] || null;
 const nameOf = u => [u.first_name, u.last_name].filter(Boolean).join(' ').slice(0, 40) || 'Foydalanuvchi';
-const isPaid = d => !!(d && d.paid_until && new Date(d.paid_until).getTime() > Date.now());
+const termOn = d => !!(d && d.paid_until && new Date(d.paid_until).getTime() > Date.now());   // haqiqiy to'langan muddat bormi
+const isPaid = d => !!d && (!PAYON || termOn(d));                                                // ishlash huquqi (bepul rejimda hamma)
+const canViloyat = d => !!d && (!PAYON || d.plan === 'viloyat');                                  // viloyat taksisi ochiqmi
+const paidSql = a => PAYON ? '(' + (a ? a + '.' : '') + 'paid_until > now())' : 'true';           // SQL uchun isPaid
 const fdate = t => new Date(t).toLocaleDateString('ru-RU', { timeZone: 'Asia/Tashkent' });
 const daysLeft = t => Math.max(0, Math.ceil((new Date(t).getTime() - Date.now()) / 86400000));
 function normPhone(s) {
@@ -156,7 +171,7 @@ async function regScreen(mode, nodeId) {
 let menuFresh = 0;
 async function menuKb(id) {
   menuFresh = id;
-  const d = await getDriver(id), canOrder = !(isPaid(d) && !isAdmin(id)), rows = [];
+  const d = await getDriver(id), canOrder = !(termOn(d) && !isAdmin(id)), rows = [];
   if (canOrder) rows.push([{ text: B.taxi }]);
   if (d) rows.push([{ text: d.online ? B.off : B.on }, { text: B.pay }], [{ text: B.line }, { text: B.me }]); else rows.push([{ text: B.drv }]);
   if (isAdmin(id)) rows.push([{ text: B.adm }]);
@@ -165,7 +180,7 @@ async function menuKb(id) {
 const home = async (chat, text) => send(chat, text || 'Bosh menyu 👇', { reply_markup: await menuKb(chat) });
 const PH_NOTE = 'Pastdagi tugmani bosganda Telegram «ulashasizmi?» deb so‘raydi. Bu oddiy savol, <b>OK</b> bosing. Raqamingiz faqat haydovchiga ko‘rinadi.\n\n❗ Faqat bitta qoida: <b>SMS kodlarni hech kimga, botga ham yubormang.</b>';
 const PHONE_ASK = '📞 Telefon raqamingizni yuboring (haydovchi qo‘ng‘iroq qiladi).\n\n' + PH_NOTE + '\n\nYoki raqamni yozing: <code>90 123 45 67</code>';
-const WELCOME = 'Assalomu alaykum! 🚕 <b>Baxu Taksi</b>\n\n🚖 <b>Taksi chaqirish</b> — yo‘lovchi uchun\n🚕 <b>Haydovchiman</b> — haydovchi bo‘lish uchun (oyiga qat’iy to‘lov, komissiya yo‘q)';
+const WELCOME = 'Assalomu alaykum! 🚕 <b>Baxu Taksi</b>\n\n🚖 <b>Taksi chaqirish</b> — yo‘lovchi uchun (<b>mutlaqo bepul</b>)\n🚕 <b>Haydovchiman</b> — haydovchi bo‘lish uchun (komissiya yo‘q)';
 const welcome = async () => { const w = await setting('welcome', ''); return w ? plain(w) : WELCOME; };
 
 // ---------- yo'lovchi ----------
@@ -174,11 +189,11 @@ async function activeOrder(uid) {
 }
 async function startTaxi(chat) {
   const d = await getDriver(chat);
-  if (isPaid(d) && !isAdmin(chat)) return home(chat, '🚕 Siz haydovchisiz, oylik muddatingiz amal qilmoqda (' + fdate(d.paid_until) + ' gacha). Shu muddat ichida o‘zingiz taksi chaqira olmaysiz.');
+  if (termOn(d) && !isAdmin(chat)) return home(chat, '🚕 Siz haydovchisiz, oylik muddatingiz amal qilmoqda (' + fdate(d.paid_until) + ' gacha). Shu muddat ichida o‘zingiz taksi chaqira olmaysiz.');
   const act = await activeOrder(chat);
   if (act && !isAdmin(chat)) return send(chat, '⏳ <b>Sizda faol buyurtma bor</b> #' + act.id + '\n' + (act.status === 'taken' ? 'Haydovchi qabul qilgan, u siz bilan bog‘lanadi.' : 'Haydovchilarga yuborilgan, javobni kuting.') + '\n\nYangi buyurtma berish uchun avval shuni yakunlang yoki bekor qiling.', { reply_markup: { inline_keyboard: [[{ text: '❌ Buyurtmani bekor qilish', callback_data: 'pc:' + act.id }]] } });
   await clrSt(chat);
-  return send(chat, '🚖 <b>Qanday taksi kerak?</b>\n\n🏘 <b>Mahalla taksisi</b> — o‘z qishlog‘ingiz/mahallangiz ichida\n🛣 <b>Viloyat taksisi</b> — tuman va shaharlar orasida', { reply_markup: { inline_keyboard: [
+  return send(chat, '🚖 <b>Qanday taksi kerak?</b>\n\n🏘 <b>Mahalla taksisi</b> — o‘z qishlog‘ingiz/mahallangiz ichida\n🛣 <b>Viloyat taksisi</b> — tuman va shaharlar orasida\n\n✅ Yo‘lovchilar uchun xizmat <b>mutlaqo bepul</b>.', { reply_markup: { inline_keyboard: [
     [{ text: '🏘 Mahalla taksisi', callback_data: 'pk:m' }],
     [{ text: '🛣 Viloyat taksisi', callback_data: 'pk:v' }]] } });
 }
@@ -186,7 +201,7 @@ const askAddr = async (chat, text) => send(chat, (text ? text + '\n\n' : '') + '
 
 async function eligible(kind, rid, toId, except) {
   const r = await db.q(
-    "select d.tg_id from ln_drivers d where d.blocked=false and d.online and d.online_at > now() - interval '" + HOURS_ONLINE + " hours' and d.paid_until > now() and d.kind=$1 " +
+    "select d.tg_id from ln_drivers d where d.blocked=false and d.online and d.online_at > now() - interval '" + HOURS_ONLINE + " hours' and " + paidSql('d') + (PAYON && kind === 'viloyat' ? " and d.plan='viloyat'" : '') + " and d.kind=$1 " +
     "and d.region_id=$2 and d.to_id=$3 and d.tg_id<>$4 " +
     "order by d.online_at limit 60", [kind, rid, toId || 0, except || 0]);
   return r.rows.map(x => +x.tg_id);
@@ -197,7 +212,7 @@ async function placeOrder(uid, pname, phone, data) {
   const ids = await eligible(data.k, data.rid, data.to_id, isAdmin(uid) ? 0 : uid); // admin o'zini sinab ko'ra oladi
   if (!ids.length && process.env.ADMIN_ID) {
     try {
-      const x = (await db.q("select count(*) filter (where region_id=$1 and to_id=$2)::int r, count(*) filter (where region_id=$1 and to_id=$2 and kind=$3)::int k, count(*) filter (where region_id=$1 and to_id=$2 and kind=$3 and online)::int o, count(*) filter (where region_id=$1 and to_id=$2 and kind=$3 and online and paid_until>now())::int p, count(*) filter (where region_id=$1 and to_id=$2 and kind=$3 and online and paid_until>now() and not blocked and online_at>now()-interval '" + HOURS_ONLINE + " hours')::int ok from ln_drivers", [data.rid, data.to_id || 0, data.k])).rows[0];
+      const x = (await db.q("select count(*) filter (where region_id=$1 and to_id=$2)::int r, count(*) filter (where region_id=$1 and to_id=$2 and kind=$3)::int k, count(*) filter (where region_id=$1 and to_id=$2 and kind=$3 and online)::int o, count(*) filter (where region_id=$1 and to_id=$2 and kind=$3 and online and " + paidSql() + ")::int p, count(*) filter (where region_id=$1 and to_id=$2 and kind=$3 and online and " + paidSql() + " and not blocked and online_at>now()-interval '" + HOURS_ONLINE + " hours')::int ok from ln_drivers", [data.rid, data.to_id || 0, data.k])).rows[0];
       await quiet(send(String(process.env.ADMIN_ID).trim(), '🔎 <b>Buyurtma uchun haydovchi topilmadi</b>\nYo‘nalish: <b>' + (await routeOf(data.rid, data.to_id)) + '</b> (' + (data.k === 'viloyat' ? 'viloyat' : 'mahalla') + ' taksisi)\n\nShu yo‘nalishdagi haydovchilar: <b>' + x.r + '</b>\n• shu turdagi: ' + x.k + '\n• liniyada: ' + x.o + '\n• to‘lovi bor: ' + x.p + '\n• buyurtma olishga tayyor: <b>' + x.ok + '</b>\n\nBatafsil: /tekshir'));
     } catch (e) { /* tashxis xatosi buyurtmaga ta'sir qilmasin */ }
   }
@@ -245,10 +260,13 @@ async function startDriver(chat) {
 async function showMe(chat) {
   const d = await getDriver(chat);
   if (!d) return home(chat, 'Siz haydovchi emassiz. «' + B.drv + '» ni bosing.');
-  const pr = await priceOf(d.kind), rn = d.region_id && d.to_id ? await routeOf(d.region_id, d.to_id) : '—';
-  const st = isPaid(d) ? '✅ Amal qiladi: <b>' + fdate(d.paid_until) + '</b> gacha (' + daysLeft(d.paid_until) + ' kun)' : '⚠️ To‘lov yo‘q yoki muddati tugagan';
-  return home(chat, '🚕 <b>' + esc(d.name) + '</b>\n📞 ' + esc(showPhone(d.phone)) + '\n🚗 ' + esc(d.car) + '\n🏷 ' + (d.kind === 'viloyat' ? 'Viloyat taksisi' : 'Mahalla taksisi') + '\n📍 Liniyangiz: <b>' + rn +
-    '</b>\n💰 Oylik to‘lov: ' + fmt(pr) + ' so‘m\n' + st + '\n' + (d.online && isPaid(d) ? '🟢 Liniyadasiz' : '🔴 Liniyada emassiz'));
+  const rn = d.region_id && d.to_id ? await routeOf(d.region_id, d.to_id) : '—', pl = d.plan === 'viloyat' ? 'viloyat' : 'mahalla';
+  let money;
+  if (!PAYON) money = '🎁 Hozir xizmat <b>bepul</b> (to‘lov kerak emas)';
+  else money = '💰 Tarif: <b>' + planName(pl) + '</b> · ' + fmt(await priceOf(pl)) + ' so‘m/oy\n' + (termOn(d) ? '✅ Amal qiladi: <b>' + fdate(d.paid_until) + '</b> gacha (' + daysLeft(d.paid_until) + ' kun)' : '⚠️ To‘lov yo‘q yoki muddati tugagan') +
+    (pl === 'mahalla' ? '\n🔒 Viloyat taksisi yopiq. «' + B.line + '» orqali ochishingiz mumkin.' : '');
+  return home(chat, '🚕 <b>' + esc(d.name) + '</b>\n📞 ' + esc(showPhone(d.phone)) + '\n🚗 ' + esc(d.car) + '\n🏷 Hozirgi liniya: ' + (d.kind === 'viloyat' ? 'Viloyat taksisi' : 'Mahalla taksisi') + '\n📍 Liniyangiz: <b>' + rn +
+    '</b>\n' + money + '\n' + (d.online && isPaid(d) ? '🟢 Liniyadasiz' : '🔴 Liniyada emassiz'));
 }
 async function goOnline(chat, on) {
   const d = await getDriver(chat);
@@ -256,6 +274,7 @@ async function goOnline(chat, on) {
   if (d.blocked) return home(chat, '⛔ Hisobingiz bloklangan. Admin bilan bog‘laning.');
   if (on) {
     if (!isPaid(d)) return home(chat, '⚠️ Liniyaga chiqish uchun oylik to‘lov kerak. «' + B.pay + '» ni bosing.');
+    if (PAYON && d.kind === 'viloyat' && !canViloyat(d)) { await home(chat, '🔒 Viloyat taksisi uchun <b>Viloyat + Mahalla</b> tarifi kerak.'); return startPay(chat); }
     if (!d.region_id || !d.to_id) return startChange(chat);
     await db.q('update ln_drivers set online=true, online_at=now() where tg_id=$1', [chat]);
     return home(chat, '🟢 Siz liniyadasiz: <b>' + (await routeOf(d.region_id, d.to_id)) + '</b>\nBuyurtma kelsa, shu yerga xabar keladi.\n\n⚠️ Xizmatni tugatgandan keyin liniyani o‘chirib qo‘yish esingizdan chiqmasin. Unutsangiz, yoqilgandan ' + HOURS_ONLINE + ' soat o‘tgach o‘zi avto chiqadi. Xohlagan paytingizda yana yoqishingiz mumkin.\n\nBoshqa joyga o‘tish: «' + B.line + '».');
@@ -267,30 +286,64 @@ async function startChange(chat) {
   const d = await getDriver(chat);
   if (!d) return home(chat, 'Avval «' + B.drv + '» orqali ro‘yxatdan o‘ting.');
   await setSt(chat, 'd_chg', {});
-  const cur = d.kind === 'viloyat' ? 'viloyat' : 'mahalla';
-  return send(chat, '📍 <b>Qaysi taksi liniyasiga o‘tasiz?</b>\n\n🏘 <b>Mahalla taksisi</b> — mahallangiz/qishlog‘ingiz ichida\n🛣 <b>Viloyat taksisi</b> — viloyatlar orasida\n\nHozir: <b>' + (cur === 'viloyat' ? 'Viloyat' : 'Mahalla') + ' taksisi</b>', { reply_markup: { inline_keyboard: [
+  const cur = d.kind === 'viloyat' ? 'viloyat' : 'mahalla', lock = PAYON && !canViloyat(d);
+  let txt = '📍 <b>Qaysi taksi liniyasiga o‘tasiz?</b>\n\n🏘 <b>Mahalla taksisi</b> — mahallangiz/qishlog‘ingiz ichida\n🛣 <b>Viloyat taksisi</b> — viloyatlar orasida (Viloyat + Mahalla tarifi)\n\nHozir: <b>' + (cur === 'viloyat' ? 'Viloyat' : 'Mahalla') + ' taksisi</b>';
+  const rows = [
     [{ text: (cur === 'mahalla' ? '✅ ' : '') + '🏘 Mahalla taksisi', callback_data: 'kc:m' }],
-    [{ text: (cur === 'viloyat' ? '✅ ' : '') + '🛣 Viloyat taksisi', callback_data: 'kc:v' }]] } });
+    [{ text: (cur === 'viloyat' ? '✅ ' : lock ? '🔒 ' : '') + '🛣 Viloyat taksisi', callback_data: 'kc:v' }]];
+  if (lock) {
+    const act = termOn(d), amt = act ? await upgPrice() : await priceOf('viloyat');
+    txt += '\n\n🔒 <b>Viloyat taksisi hozir yopiq.</b> Sizda <b>Mahalla</b> tarifi.\n' + (act ? 'Ochish uchun qolgan summani to‘lang: <b>' + fmt(amt) + ' so‘m</b>.' : 'Viloyat + Mahalla tarifi: <b>' + fmt(amt) + ' so‘m/oy</b>.') + ' To‘lov tasdiqlangach avtomatik ochiladi.';
+    rows.push([{ text: '💳 ' + (act ? 'Viloyat taksisini ochish' : 'Viloyat + Mahalla') + ' · ' + fmt(amt) + ' so‘m', callback_data: act ? 'pp:u' : 'pp:v' }]);
+  }
+  return send(chat, txt, { reply_markup: { inline_keyboard: rows } });
 }
+const payCard = async () => setting('card', '');
 async function startPay(chat) {
   const d = await getDriver(chat);
   if (!d) return home(chat, 'Avval «' + B.drv + '» orqali ro‘yxatdan o‘ting.');
-  const pr = await priceOf(d.kind), card = await setting('card', '');
-  if (!card) return home(chat, 'Karta ma’lumoti hali kiritilmagan. Admin bilan bog‘laning.');
+  if (!PAYON) return home(chat, '🎁 <b>Hozir xizmat hamma uchun bepul.</b>\nTo‘lov shart emas, «' + B.on + '» ni bosib ishlayvering.\n\nTo‘lov joriy etilsa, oldindan xabar beramiz.');
+  if (!(await payCard())) return home(chat, 'Karta ma’lumoti hali kiritilmagan. Admin bilan bog‘laning.');
+  const pm = await priceOf('mahalla'), pv = await priceOf('viloyat'), up = await upgPrice(), act = termOn(d), pl = d.plan === 'viloyat' ? 'viloyat' : 'mahalla';
+  if (act && pl === 'viloyat') return payShow(chat, d, 'v');
+  const rows = act
+    ? [[{ text: '⬆️ Viloyat taksisini ochish · ' + fmt(up) + ' so‘m', callback_data: 'pp:u' }], [{ text: '🔄 Muddatni uzaytirish (Mahalla) · ' + fmt(pm) + ' so‘m', callback_data: 'pp:m' }]]
+    : [[{ text: '🏘 Mahalla taksisi · ' + fmt(pm) + ' so‘m/oy', callback_data: 'pp:m' }], [{ text: '🛣 Viloyat + Mahalla · ' + fmt(pv) + ' so‘m/oy', callback_data: 'pp:v' }]];
   await setSt(chat, 'pay', {});
-  return send(chat, '💳 <b>Oylik to‘lov: ' + fmt(pr) + ' so‘m</b> (' + (await payDays()) + ' kun)\n\nKarta:\n<code>' + esc(card) + '</code>\n\nTo‘lagach <b>chek rasmini (skrinshot)</b> shu yerga yuboring. Admin tasdiqlagach liniyaga chiqa olasiz.',
+  return send(chat, '💳 <b>To‘lov</b>\n\n' + (act ? '✅ Hozirgi tarif: <b>Mahalla taksisi</b> (' + fdate(d.paid_until) + ' gacha).\n⬆️ Viloyat taksisini ochish uchun faqat <b>qolgan summani</b> (' + fmt(up) + ' so‘m) to‘laysiz, muddat o‘zgarmaydi.\n\n' : '🏘 <b>Mahalla taksisi</b> — faqat mahalla ichida\n🛣 <b>Viloyat + Mahalla</b> — ikkalasi ham\n\n') + 'Tarifni tanlang 👇', { reply_markup: { inline_keyboard: rows } });
+}
+async function payShow(chat, d, opt) {
+  const card = await payCard();
+  if (!card) return home(chat, 'Karta ma’lumoti hali kiritilmagan. Admin bilan bog‘laning.');
+  let upg = opt === 'u';
+  const plan = opt === 'm' ? 'mahalla' : 'viloyat';
+  if (upg && !termOn(d)) upg = false;                       // muddati tugagan: to'liq viloyat tarifi
+  if (plan === 'viloyat' && upg && d.plan === 'viloyat') return home(chat, '✅ Viloyat taksisi sizda allaqachon ochiq.');
+  const amt = upg ? await upgPrice() : await priceOf(plan);
+  await setSt(chat, 'pay', { plan, upg, amt });
+  return send(chat, '💳 <b>To‘lov: ' + fmt(amt) + ' so‘m</b>\n' + (upg ? '⬆️ Viloyat taksisini ochish (qolgan summa), muddat o‘zgarmaydi' : '🏷 ' + planName(plan) + ' · ' + (await payDays()) + ' kun') + '\n\nKarta:\n<code>' + esc(card) + '</code>\n\nTo‘lagach <b>chek rasmini (skrinshot)</b> shu yerga yuboring. Admin tasdiqlagach ' + (upg ? 'viloyat taksisi ochiladi.' : 'liniyaga chiqa olasiz.'),
     { reply_markup: { keyboard: [[{ text: B.cancel }]], resize_keyboard: true } });
 }
+async function payPick(q) {
+  const chat = q.message.chat.id, opt = q.data.split(':')[1];
+  await answer(q);
+  const d = await getDriver(chat);
+  if (!d) return home(chat, 'Avval «' + B.drv + '» orqali ro‘yxatdan o‘ting.');
+  if (!PAYON) return home(chat, '🎁 Hozir xizmat hamma uchun bepul, to‘lov shart emas.');
+  if (!['m', 'v', 'u'].includes(opt)) return;
+  return payShow(chat, d, opt);
+}
 async function finishReg(chat, from, d, rid, toId) {
-  await db.q("insert into ln_drivers(tg_id,name,username,phone,car,kind,region_id,to_id) values($1,$2,$3,$4,$5,$6,$7,$8) on conflict (tg_id) do update set name=excluded.name, phone=excluded.phone, car=excluded.car, kind=excluded.kind, region_id=excluded.region_id, to_id=excluded.to_id",
+  await db.q("insert into ln_drivers(tg_id,name,username,phone,car,kind,plan,region_id,to_id) values($1,$2,$3,$4,$5,$6,$6,$7,$8) on conflict (tg_id) do update set name=excluded.name, phone=excluded.phone, car=excluded.car, kind=excluded.kind, region_id=excluded.region_id, to_id=excluded.to_id",
     [chat, d.name, from.username || '', d.phone, d.car, d.kind, rid, toId]);
   await clrSt(chat);
   const pr = await priceOf(d.kind), fe = await freeEnd();
+  if (!PAYON) return home(chat, '✅ <b>Ro‘yxatdan o‘tdingiz!</b>\n\n🎁 Hozir xizmat <b>hamma uchun bepul</b>. «' + B.on + '» ni bosing.\n\nLiniyani istagan payt «' + B.line + '» orqali almashtira olasiz.');
   if (fe) {
     await db.q('update ln_drivers set paid_until=greatest(coalesce(paid_until, now()), $2::timestamptz) where tg_id=$1', [chat, fe.toISOString()]);
-    return home(chat, '✅ <b>Ro‘yxatdan o‘tdingiz!</b>\n\n🎁 Hozir <b>bepul davr</b>: <b>' + fdate(fe) + '</b> gacha to‘lovsiz ishlaysiz. «' + B.on + '» ni bosing.\nKeyin oylik to‘lov: <b>' + fmt(pr) + ' so‘m</b> («' + B.pay + '»).\n\nLiniyani istagan payt «' + B.line + '» orqali almashtira olasiz.');
+    return home(chat, '✅ <b>Ro‘yxatdan o‘tdingiz!</b>\n\n🎁 Hozir <b>bepul davr</b>: <b>' + fdate(fe) + '</b> gacha to‘lovsiz ishlaysiz. «' + B.on + '» ni bosing.\nKeyin oylik to‘lov (' + planName(d.kind) + '): <b>' + fmt(pr) + ' so‘m</b> («' + B.pay + '»).\n\nLiniyani istagan payt «' + B.line + '» orqali almashtira olasiz.');
   }
-  return home(chat, '✅ <b>Ro‘yxatdan o‘tdingiz!</b>\n\nKeyingi qadam: oylik to‘lov <b>' + fmt(pr) + ' so‘m</b>. «' + B.pay + '» ni bosing, to‘lab chekni yuboring. Admin tasdiqlagach «' + B.on + '» ishlaydi.\n\nLiniyani istagan payt «' + B.line + '» orqali almashtira olasiz.');
+  return home(chat, '✅ <b>Ro‘yxatdan o‘tdingiz!</b>\n\nTarif: <b>' + planName(d.kind) + '</b>\nKeyingi qadam: oylik to‘lov <b>' + fmt(pr) + ' so‘m</b>. «' + B.pay + '» ni bosing, to‘lab chekni yuboring. Admin tasdiqlagach «' + B.on + '» ishlaydi.\n\nLiniyani istagan payt «' + B.line + '» orqali almashtira olasiz.');
 }
 
 async function accept(q) {
@@ -299,6 +352,7 @@ async function accept(q) {
   if (!d) return answer(q, 'Avval haydovchi sifatida ro‘yxatdan o‘ting', true);
   if (d.blocked) return answer(q, 'Hisobingiz bloklangan', true);
   if (!isPaid(d)) return answer(q, 'To‘lov muddati tugagan. «💳 To‘lov» ni bosing.', true);
+  if (PAYON && !canViloyat(d)) { const ok0 = (await db.q('select kind from ln_orders where id=$1', [id])).rows[0]; if (ok0 && ok0.kind === 'viloyat') return answer(q, '🔒 Viloyat buyurtmasini olish uchun «Viloyat + Mahalla» tarifi kerak. «💳 To‘lov» ni bosing.', true); }
   const r = await db.q("update ln_orders set status='taken', driver_id=$2, taken_at=now() where id=$1 and status='new' and created > now() - interval '" + ORDER_MIN + " minutes' returning *", [id, from.id]);
   const o = r.rows[0];
   if (!o) {
@@ -397,8 +451,8 @@ async function driverCard(chat, id) {
   if (!d) return send(chat, '❌ Haydovchi topilmadi');
   const n = (await db.q("select count(*) filter (where status='done')::int done, count(*)::int tot, count(rating)::int rn, round(avg(rating)::numeric,1) ra from ln_orders where driver_id=$1", [id])).rows[0];
   const text = '🚕 <b>' + esc(d.name) + '</b> · <code>' + d.tg_id + '</code>' + (d.username ? ' · @' + esc(d.username) : '') + '\n📞 ' + esc(showPhone(d.phone)) + '\n🚗 ' + esc(d.car) +
-    '\n🏷 ' + (d.kind === 'viloyat' ? 'Viloyat' : 'Mahalla') + ' taksisi\n📍 ' + (d.region_id && d.to_id ? await routeOf(d.region_id, d.to_id) : '—') +
-    '\n💰 ' + (isPaid(d) ? '✅ ' + fdate(d.paid_until) + ' gacha (' + daysLeft(d.paid_until) + ' kun)' : '❌ to‘lov yo‘q') + '\n' + (d.online ? '🟢 Liniyada' : '🔴 Liniyada emas') + (d.blocked ? '\n⛔ <b>Bloklangan</b>' : '') +
+    '\n🏷 Tarif: ' + planName(d.plan === 'viloyat' ? 'viloyat' : 'mahalla') + ' · liniya: ' + (d.kind === 'viloyat' ? 'viloyat' : 'mahalla') + '\n📍 ' + (d.region_id && d.to_id ? await routeOf(d.region_id, d.to_id) : '—') +
+    '\n💰 ' + (!PAYON ? '🎁 bepul rejim' : termOn(d) ? '✅ ' + fdate(d.paid_until) + ' gacha (' + daysLeft(d.paid_until) + ' kun)' : '❌ to‘lov yo‘q') + '\n' + (d.online ? '🟢 Liniyada' : '🔴 Liniyada emas') + (d.blocked ? '\n⛔ <b>Bloklangan</b>' : '') +
     '\n📦 Buyurtmalar: ' + n.done + ' bajarilgan / ' + n.tot + ' jami' + (n.rn > 0 ? '\n⭐ Baho: ' + n.ra + ' (' + n.rn + ' ta)' : '') + '\n🗓 Ro‘yxatdan: ' + fdate(d.created);
   return send(chat, text, { reply_markup: { inline_keyboard: [
     [d.blocked ? { text: '✅ Blokdan olish', callback_data: 'dc:ubl:' + id } : { text: '⛔ Bloklash', callback_data: 'dc:blk:' + id }],
@@ -414,15 +468,15 @@ async function adminMenu(chat, what, arg) {
   }
   if (what === 'drv') {
     const off = Math.max(0, +arg || 0);
-    const c = (await db.q("select count(*)::int n, count(*) filter (where paid_until>now())::int paid, count(*) filter (where online and paid_until>now())::int onl from ln_drivers")).rows[0];
-    const l = (await db.q("select tg_id,name,kind,paid_until,blocked from ln_drivers order by created desc limit 10 offset $1", [off])).rows;
+    const c = (await db.q("select count(*)::int n, count(*) filter (where " + paidSql() + ")::int paid, count(*) filter (where online and " + paidSql() + ")::int onl from ln_drivers")).rows[0];
+    const l = (await db.q("select tg_id,name,kind,plan,paid_until,blocked from ln_drivers order by created desc limit 10 offset $1", [off])).rows;
     const kb = [];
     if (off + 10 < c.n) kb.push({ text: 'Keyingi ➡️', callback_data: 'am:drv:' + (off + 10) });
-    return send(chat, '👥 <b>Haydovchilar</b>: ' + c.n + ' · to‘lagan: ' + c.paid + ' · liniyada: ' + c.onl + '\n\n' + (l.map(d => (d.blocked ? '⛔ ' : '• ') + esc(d.name) + ' · ' + (d.kind === 'viloyat' ? 'viloyat' : 'mahalla') + ' · ' + (isPaid(d) ? fdate(d.paid_until) + ' gacha' : '❌') + '\n   👉 /h' + d.tg_id).join('\n') || 'Hozircha yo‘q') +
+    return send(chat, '👥 <b>Haydovchilar</b>: ' + c.n + (PAYON ? ' · to‘lagan: ' + c.paid : ' · 🎁 bepul rejim') + ' · liniyada: ' + c.onl + '\n\n' + (l.map(d => (d.blocked ? '⛔ ' : '• ') + esc(d.name) + ' · ' + (d.plan === 'viloyat' ? 'viloyat+mahalla' : 'mahalla') + (d.kind !== d.plan ? ' (liniya: ' + (d.kind === 'viloyat' ? 'viloyat' : 'mahalla') + ')' : '') + ' · ' + (!PAYON ? '🎁' : termOn(d) ? fdate(d.paid_until) + ' gacha' : '❌') + '\n   👉 /h' + d.tg_id).join('\n') || 'Hozircha yo‘q') +
       '\n\n/h ID ni bossangiz haydovchi kartasi ochiladi (bloklash, kun qo‘shish, xabar).', kb.length ? { reply_markup: { inline_keyboard: [kb] } } : {});
   }
   if (what === 'lines') {
-    const r = (await db.q("select d.name, d.kind, d.region_id, d.to_id from ln_drivers d where d.online and d.paid_until>now() and d.blocked=false and d.online_at>now()-interval '" + HOURS_ONLINE + " hours' order by d.region_id")).rows;
+    const r = (await db.q("select d.name, d.kind, d.region_id, d.to_id from ln_drivers d where d.online and " + paidSql('d') + " and d.blocked=false and d.online_at>now()-interval '" + HOURS_ONLINE + " hours' order by d.region_id")).rows;
     if (!r.length) return send(chat, '🔴 Hozir liniyada hech kim yo‘q.');
     const g = {};
     for (const d of r) { const k = (d.region_id && d.to_id ? (await rname(d.region_id)) + ' → ' + (await rname(d.to_id)) : '—') + ' (' + (d.kind === 'viloyat' ? 'viloyat' : 'mahalla') + ')'; (g[k] = g[k] || []).push(d.name); }
@@ -430,9 +484,9 @@ async function adminMenu(chat, what, arg) {
   }
   if (what === 'st') {
     const u = (await db.q("select count(*)::int n, count(*) filter (where created>=now()-interval '1 day')::int d1, count(*) filter (where blocked)::int bl from ln_users")).rows[0];
-    const dr = (await db.q("select count(*)::int n, count(*) filter (where paid_until>now())::int paid, count(*) filter (where online and paid_until>now() and online_at>now()-interval '" + HOURS_ONLINE + " hours')::int onl, count(*) filter (where blocked)::int bl from ln_drivers")).rows[0];
+    const dr = (await db.q("select count(*)::int n, count(*) filter (where " + paidSql() + ")::int paid, count(*) filter (where online and " + paidSql() + " and online_at>now()-interval '" + HOURS_ONLINE + " hours')::int onl, count(*) filter (where blocked)::int bl from ln_drivers")).rows[0];
     const o = (await db.q("select count(*) filter (where created>=date_trunc('day',now()))::int today, count(*) filter (where status='new' and created>now()-interval '" + ORDER_MIN + " minutes')::int nw, count(*) filter (where status='taken')::int tk, count(*) filter (where status='done')::int dn, count(*)::int tot from ln_orders")).rows[0];
-    return send(chat, '📊 <b>Statistika</b>\n\n👤 Botda: <b>' + u.n + '</b> odam (24 soatda yangi: ' + u.d1 + ', bloklangan: ' + u.bl + ')\n🚕 Haydovchilar: <b>' + dr.n + '</b> · to‘lagan: ' + dr.paid + ' · liniyada: <b>' + dr.onl + '</b> · bloklangan: ' + dr.bl +
+    return send(chat, '📊 <b>Statistika</b>\n\n👤 Botda: <b>' + u.n + '</b> odam (24 soatda yangi: ' + u.d1 + ', bloklangan: ' + u.bl + ')\n🚕 Haydovchilar: <b>' + dr.n + '</b>' + (PAYON ? ' · to‘lagan: ' + dr.paid : ' · 🎁 bepul rejim') + ' · liniyada: <b>' + dr.onl + '</b> · bloklangan: ' + dr.bl +
       '\n\n📦 Bugungi buyurtma: ' + o.today + '\nKutilayotgan: ' + o.nw + ' · yo‘lda: ' + o.tk + '\nBajarilgan: ' + o.dn + ' · jami: ' + o.tot);
   }
   if (what === 'bc') {
@@ -442,8 +496,8 @@ async function adminMenu(chat, what, arg) {
       [{ text: '🟢 Liniyadagilarga', callback_data: 'bc:on' }]] } });
   }
   if (what === 'set') {
-    return send(chat, '⚙️ <b>Sozlamalar</b>\nMahalla taksisi: <b>' + fmt(await priceOf('mahalla')) + '</b> so‘m/oy\nViloyat taksisi: <b>' + fmt(await priceOf('viloyat')) + '</b> so‘m/oy\nMuddat: ' + (await payDays()) + ' kun\nKarta: <code>' + esc(await setting('card', '— kiritilmagan —')) + '</code>\n\n' +
-      '<b>O‘zgartirish:</b>\n<code>/karta 8600 1234 5678 9012 Ism</code>\n<code>/narx_m 20000</code> — mahalla narxi\n<code>/narx_v 40000</code> — viloyat narxi\n<code>/kun 30</code> — muddat\n<code>/salom Matn</code> — bosh xabar matni\n<code>/yoq ID</code> yoki <code>/yoq ID 15</code> — haydovchini yoqish\n<code>/toxtat ID</code> — to‘xtatish\n<code>/blok ID</code>, <code>/blokdan ID</code> — bloklash\n<code>/xabar ID matn</code> — bitta odamga xabar');
+    return send(chat, '⚙️ <b>Sozlamalar</b>\nRejim: ' + (PAYON ? '💳 <b>PULLIK</b>' : '🎁 <b>BEPUL</b> (hamma haydovchi bepul)') + '\n🏘 Mahalla taksisi: <b>' + fmt(await priceOf('mahalla')) + '</b> so‘m/oy\n🛣 Viloyat + Mahalla: <b>' + fmt(await priceOf('viloyat')) + '</b> so‘m/oy\n⬆️ Mahalladan viloyatga o‘tish: <b>' + fmt(await upgPrice()) + '</b> so‘m\nMuddat: ' + (await payDays()) + ' kun\nKarta: <code>' + esc(await setting('card', '— kiritilmagan —')) + '</code>\n🚖 Yo‘lovchilar: doim bepul\n\n' +
+      '<b>O‘zgartirish:</b>\n<code>/pullik</code> — pullik rejimni yoqish\n<code>/bepul</code> — hamma uchun bepul\n<code>/karta 8600 1234 5678 9012 Ism</code>\n<code>/narx_m 20000</code> — Mahalla narxi\n<code>/narx_v 30000</code> — Viloyat + Mahalla narxi\n<code>/kun 30</code> — muddat\n<code>/salom Matn</code> — bosh xabar matni\n<code>/yoq ID</code> yoki <code>/yoq ID 15</code> — haydovchini yoqish\n<code>/toxtat ID</code> — to‘xtatish\n<code>/blok ID</code>, <code>/blokdan ID</code> — bloklash\n<code>/xabar ID matn</code> — bitta odamga xabar');
   }
   if (what === 'tx') {
     await loadTx(true);
@@ -455,7 +509,7 @@ async function adminMenu(chat, what, arg) {
   }
 }
 async function sendCheque(admChat, p, name, phone, kind) {
-  const cap = '💳 <b>To‘lov cheki</b> #' + p.id + '\n👤 ' + esc(name) + ' · ' + esc(showPhone(phone)) + '\n🏷 ' + (kind === 'viloyat' ? 'Viloyat' : 'Mahalla') + ' taksisi · <code>' + p.driver_id + '</code>';
+  const cap = '💳 <b>To‘lov cheki</b> #' + p.id + '\n👤 ' + esc(name) + ' · ' + esc(showPhone(phone)) + '\n🏷 ' + (p.upg ? '⬆️ Viloyat taksisini ochish (qolgan summa)' : planName(p.plan || kind)) + (p.amount ? ' · <b>' + fmt(p.amount) + ' so‘m</b>' : '') + '\n🆔 <code>' + p.driver_id + '</code>';
   const kb = { inline_keyboard: [[{ text: '✅ Tasdiqlash', callback_data: 'pa:ok:' + p.id }, { text: '❌ Rad', callback_data: 'pa:no:' + p.id }]] };
   const isDoc = String(p.file_id).startsWith('d:'), fid = String(p.file_id).slice(2);
   return tg(isDoc ? 'sendDocument' : 'sendPhoto', isDoc ? { chat_id: admChat, document: fid, caption: cap, parse_mode: 'HTML', reply_markup: kb } : { chat_id: admChat, photo: fid, caption: cap, parse_mode: 'HTML', reply_markup: kb });
@@ -473,11 +527,25 @@ async function payDecide(q) {
   await quiet(tg('editMessageReplyMarkup', { chat_id: q.message.chat.id, message_id: q.message.message_id, reply_markup: { inline_keyboard: [[{ text: ok ? '✅ Tasdiqlandi' : '❌ Rad etildi', callback_data: 'x' }]] } }));
   await answer(q, ok ? 'Tasdiqlandi' : 'Rad etildi');
   if (!ok) return quiet(send(p.driver_id, '❌ To‘lov chekingiz tasdiqlanmadi. Chekni tekshirib, qayta yuboring: «' + B.pay + '».'));
-  const dr = await getDriver(p.driver_id), amount = await priceOf(dr ? dr.kind : 'mahalla');
+  const dr = await getDriver(p.driver_id);
+  if (!dr) return;
+  const plan = p.plan || (dr.plan === 'viloyat' ? 'viloyat' : 'mahalla');
+  const amount = p.amount > 0 ? p.amount : (p.upg ? await upgPrice() : await priceOf(plan));
   await db.q('update ln_pay set amount=$2 where id=$1', [pid, amount]);
+  const kb = { inline_keyboard: [[{ text: '🟢 Liniyaga chiqish', callback_data: 'on:0' }], [{ text: '📍 Liniyani o‘zgartirish', callback_data: 'ch:0' }]] };
+  if (p.upg) {
+    await db.q("update ln_drivers set plan='viloyat' where tg_id=$1", [p.driver_id]);
+    return quiet(send(p.driver_id, '✅ <b>To‘lov tasdiqlandi!</b>\n🛣 <b>Viloyat taksisi ochildi.</b>\n\nEndi «📍 Liniyani o‘zgartirish» → «Viloyat taksisi» ni tanlang.' + (termOn(dr) ? '\nMuddat: <b>' + fdate(dr.paid_until) + '</b> gacha.' : '\n⚠️ Muddatingiz tugagan: «' + B.pay + '» orqali oylik to‘lovni ham qiling.'), { reply_markup: kb }).then(async () => send(p.driver_id, 'Menyu 👇', { reply_markup: await menuKb(p.driver_id) })));
+  }
+  let note = '';
+  if (plan === 'mahalla' && dr.kind === 'viloyat') {   // viloyat liniyasidan mahalla tarifiga tushdi: liniyani qayta tanlaydi
+    await db.q("update ln_drivers set kind='mahalla', region_id=null, to_id=null, online=false where tg_id=$1", [p.driver_id]);
+    note = '\n\n⚠️ Tarifingiz <b>Mahalla</b>, shuning uchun liniyangiz mahalla taksisiga o‘tdi. «📍 Liniyani o‘zgartirish» orqali yangi liniya tanlang.';
+  }
+  await db.q('update ln_drivers set plan=$2 where tg_id=$1', [p.driver_id, plan]);
   const u = await activate(p.driver_id, await payDays());
-  if (u) await quiet(send(p.driver_id, '✅ <b>To‘lov tasdiqlandi!</b>\nAmal qilish muddati: <b>' + fdate(u.paid_until) + '</b> gacha.\n\n📍 Liniyangiz: <b>' + (u.region_id && u.to_id ? await routeOf(u.region_id, u.to_id) : '—') + '</b>\nTo‘g‘ri bo‘lsa «' + B.on + '» ni bosing. Boshqa joy kerak bo‘lsa, avval liniyani o‘zgartiring.',
-    { reply_markup: { inline_keyboard: [[{ text: '🟢 Liniyaga chiqish', callback_data: 'on:0' }], [{ text: '📍 Liniyani o‘zgartirish', callback_data: 'ch:0' }]] } }).then(async () => send(p.driver_id, 'Menyu 👇', { reply_markup: await menuKb(p.driver_id) })));
+  if (u) await quiet(send(p.driver_id, '✅ <b>To‘lov tasdiqlandi!</b>\n🏷 ' + planName(plan) + '\nAmal qilish muddati: <b>' + fdate(u.paid_until) + '</b> gacha.\n\n📍 Liniyangiz: <b>' + (note ? '—' : (u.region_id && u.to_id ? await routeOf(u.region_id, u.to_id) : '—')) + '</b>\nTo‘g‘ri bo‘lsa «' + B.on + '» ni bosing. Boshqa joy kerak bo‘lsa, avval liniyani o‘zgartiring.' + note,
+    { reply_markup: kb }).then(async () => send(p.driver_id, 'Menyu 👇', { reply_markup: await menuKb(p.driver_id) })));
 }
 async function blockUser(id, on) {
   await db.q('update ln_users set blocked=$2 where tg_id=$1', [id, on]);
@@ -485,7 +553,7 @@ async function blockUser(id, on) {
 }
 async function recipients(t) {
   const sql = t === 'drv' ? 'select tg_id from ln_drivers where blocked=false'
-    : t === 'on' ? "select tg_id from ln_drivers where blocked=false and online and paid_until>now() and online_at>now()-interval '" + HOURS_ONLINE + " hours'"
+    : t === 'on' ? "select tg_id from ln_drivers where blocked=false and online and " + paidSql() + " and online_at>now()-interval '" + HOURS_ONLINE + " hours'"
     : 'select tg_id from ln_users where blocked=false union select tg_id from ln_drivers where blocked=false';
   return (await db.q(sql)).rows.map(x => +x.tg_id);
 }
@@ -499,7 +567,14 @@ async function broadcast(ids, text) {
 }
 async function adminCmd(chat, t) {
   let m;
-  if ((m = t.match(/^\/narx_([mv])\s+(\d{4,7})$/))) { await setSetting(m[1] === 'm' ? 'lp_m' : 'lp_v', m[2]); return send(chat, '✅ ' + (m[1] === 'm' ? 'Mahalla' : 'Viloyat') + ' taksisi narxi: ' + fmt(m[2]) + ' so‘m/oy'); }
+  if ((m = t.match(/^\/narx_([mv])\s+(\d{1,8})$/))) { await setSetting(m[1] === 'm' ? 'lp_m' : 'lp_v', m[2]); return send(chat, '✅ ' + (m[1] === 'm' ? 'Mahalla taksisi' : 'Viloyat + Mahalla taksisi') + ' narxi: <b>' + fmt(m[2]) + '</b> so‘m/oy\nMahalladan viloyatga o‘tish (qolgan summa): <b>' + fmt(await upgPrice()) + '</b> so‘m' + (PAYON ? '' : '\n\n🎁 Hozir bepul rejim, narx pullik rejim yoqilganda ishlaydi: /pullik')); }
+  if (/^\/pullik$/.test(t)) {
+    await setSetting('pay_on', '1'); PAYON = true;
+    await db.q("update ln_drivers set plan = case when kind='viloyat' then 'viloyat' else 'mahalla' end");
+    const x = (await db.q("select count(*)::int n, count(*) filter (where paid_until is null or paid_until<=now())::int unpaid from ln_drivers")).rows[0];
+    return send(chat, '💳 <b>Pullik rejim YOQILDI</b>\n\n🏘 Mahalla taksisi: <b>' + fmt(await priceOf('mahalla')) + '</b> so‘m/oy\n🛣 Viloyat + Mahalla: <b>' + fmt(await priceOf('viloyat')) + '</b> so‘m/oy\n⬆️ Mahalladan viloyatga o‘tish: <b>' + fmt(await upgPrice()) + '</b> so‘m\n\nHaydovchilar: ' + x.n + ' ta, shundan to‘lovi yo‘q: <b>' + x.unpaid + '</b> ta. Ular to‘lamaguncha liniyaga chiqa olmaydi.\n\n💡 Avval sinov muddati berish uchun: <code>/tekin 15</code>\nBepulga qaytish: <code>/bepul</code>');
+  }
+  if (/^\/bepul$/.test(t)) { await setSetting('pay_on', '0'); PAYON = false; return send(chat, '🎁 <b>Bepul rejim YOQILDI.</b> Hamma haydovchi to‘lovsiz va cheklovsiz ishlaydi (mahalla ham, viloyat ham).\n\nQayta pullik qilish: <code>/pullik</code>'); }
   if ((m = t.match(/^\/tekin(?:\s+(\d{1,3}))?$/))) {
     const days = m[1] === undefined ? 7 : +m[1];
     if (!days) { await setSetting('free_until', ''); return send(chat, '✅ Bepul davr to‘xtatildi. Yangi haydovchilar endi to‘laydi. Allaqachon berilgan muddatlar o‘z kunigacha amal qiladi.'); }
@@ -534,7 +609,7 @@ async function adminCmd(chat, t) {
     return send(chat, r && r.ok ? '✅ Yuborildi' : '❌ Yuborilmadi (odam botni to‘xtatgan bo‘lishi mumkin)');
   }
   if (/^\/tekshir$/.test(t)) {
-    const r = (await db.q("select d.tg_id,d.name,d.kind,d.region_id,d.to_id,d.online,d.blocked,(d.paid_until>now()) paid,(d.online_at>now()-interval '" + HOURS_ONLINE + " hours') fresh from ln_drivers d order by d.created desc limit 30")).rows;
+    const r = (await db.q("select d.tg_id,d.name,d.kind,d.plan,d.region_id,d.to_id,d.online,d.blocked," + paidSql('d') + " paid,(d.online_at>now()-interval '" + HOURS_ONLINE + " hours') fresh from ln_drivers d order by d.created desc limit 30")).rows;
     if (!r.length) return send(chat, 'Haydovchi yo‘q.');
     let out = '🔎 <b>Haydovchilar holati</b>\n';
     for (const d of r) {
@@ -542,6 +617,7 @@ async function adminCmd(chat, t) {
       if (!d.region_id || !d.to_id) bad.push('yo‘nalish tanlanmagan');
       if (d.blocked) bad.push('bloklangan');
       if (!d.paid) bad.push('to‘lov yo‘q');
+      if (PAYON && d.kind === 'viloyat' && d.plan !== 'viloyat') bad.push('viloyat tarifi to‘lanmagan');
       if (!d.online) bad.push('liniyada emas'); else if (!d.fresh) bad.push('liniya muddati tugagan');
       out += '\n' + (bad.length ? '❌' : '✅') + ' <b>' + esc(d.name) + '</b> · ' + (d.kind === 'viloyat' ? 'viloyat' : 'mahalla') + '\n   ' + (d.region_id && d.to_id ? await routeOf(d.region_id, d.to_id) : '—') + (bad.length ? '\n   ⚠️ ' + bad.join(', ') : '\n   buyurtma oladi') + '\n';
     }
@@ -631,9 +707,11 @@ async function onMessage(m) {
   if (st === 'd_car') {
     if (t.length < 6) return send(chat, 'Juda qisqa. Marka, rang va raqamni yozing.');
     d.car = t.slice(0, 60); await setSt(chat, 'd_kind', d);
-    return send(chat, '4/4 <b>Qaysi turdagi taksi?</b>\n\n🏘 <b>Mahalla taksisi</b> — o‘z mahallangiz/qishlog‘ingiz ichida yurasiz\n🛣 <b>Viloyat taksisi</b> — tumanlararo yo‘lovchi tashiysiz', { reply_markup: { inline_keyboard: [
-      [{ text: '🏘 Mahalla taksisi · ' + fmt(await priceOf('mahalla')) + ' so‘m/oy', callback_data: 'kd:m' }],
-      [{ text: '🛣 Viloyat taksisi · ' + fmt(await priceOf('viloyat')) + ' so‘m/oy', callback_data: 'kd:v' }]] } });
+    const pm = await priceOf('mahalla'), pv = await priceOf('viloyat');
+    return send(chat, '4/4 <b>Qaysi tarifni tanlaysiz?</b>\n\n🏘 <b>Mahalla taksisi</b> — o‘z mahallangiz/qishlog‘ingiz ichida' + (PAYON ? '\n   💰 <b>' + fmt(pm) + ' so‘m/oy</b>' : '') + '\n🛣 <b>Viloyat + Mahalla</b> — viloyatlar orasida ham, mahallada ham ishlaysiz' + (PAYON ? '\n   💰 <b>' + fmt(pv) + ' so‘m/oy</b>' : '') + '\n\n' +
+      (PAYON ? '💡 Mahalla tarifini olib, keyin qolgan <b>' + fmt(await upgPrice()) + ' so‘m</b> ni qo‘shib Viloyatga o‘tish mumkin.' : '🎁 Hozir <b>hamma uchun bepul</b>. To‘lov joriy etilsa, oldindan xabar beramiz.'), { reply_markup: { inline_keyboard: [
+      [{ text: '🏘 Mahalla taksisi' + (PAYON ? ' · ' + fmt(pm) + ' so‘m/oy' : ''), callback_data: 'kd:m' }],
+      [{ text: '🛣 Viloyat + Mahalla' + (PAYON ? ' · ' + fmt(pv) + ' so‘m/oy' : ''), callback_data: 'kd:v' }]] } });
   }
   if (st === 'p_ppl') {
     const n = parseInt(t, 10);
@@ -677,7 +755,8 @@ async function onMessage(m) {
     if (!ph) return send(chat, 'Chek <b>rasmini</b> yuboring (skrinshot).');
     const dr = await getDriver(chat);
     if (!dr) { await clrSt(chat); return home(chat, 'Avval ro‘yxatdan o‘ting.'); }
-    const r = await db.q('insert into ln_pay(driver_id,file_id) values($1,$2) returning *', [chat, ph]);
+    if (!d.plan) return send(chat, 'Avval yuqoridagi tugmalardan tarifni tanlang ⬆️ (yoki «' + B.pay + '» ni qayta bosing).');
+    const r = await db.q('insert into ln_pay(driver_id,file_id,plan,upg,amount) values($1,$2,$3,$4,$5) returning *', [chat, ph, d.plan, !!d.upg, d.amt || 0]);
     await clrSt(chat);
     if (process.env.ADMIN_ID) await quiet(sendCheque(String(process.env.ADMIN_ID).trim(), r.rows[0], dr.name, dr.phone, dr.kind));
     return home(chat, '✅ Chek yuborildi. Admin tasdiqlagach sizga xabar keladi.');
@@ -707,9 +786,12 @@ async function onCallback(q) {
     const s = await regScreen(d[1] === 'm' ? 'dm' : 'dv', 0);
     return edit(chat, mid, s.text, { reply_markup: s.kb });
   }
+  if (k === 'pp') return payPick(q);
   if (k === 'kc') { // liniyani o'zgartirishda taksi turini tanlash
+    const kdr = await getDriver(chat);
+    if (kdr && d[1] === 'v' && !canViloyat(kdr)) return answer(q, '🔒 Viloyat taksisi yopiq. Pastdagi «💳» tugma orqali qolgan summani to‘lang, keyin ochiladi.', true);
     await answer(q);
-    if (!(await getDriver(chat))) return home(chat, 'Avval «' + B.drv + '» orqali ro‘yxatdan o‘ting.');
+    if (!kdr) return home(chat, 'Avval «' + B.drv + '» orqali ro‘yxatdan o‘ting.');
     await setSt(chat, 'd_chg', { kind: d[1] === 'm' ? 'mahalla' : 'viloyat' });
     const s = await regScreen(d[1] === 'm' ? 'dm' : 'dv', 0);
     return edit(chat, mid, s.text, { reply_markup: s.kb });
@@ -740,11 +822,13 @@ async function onCallback(q) {
     }
     if (mode === 'dt' || mode === 'dw') {
       if (!sd.from_id) return;
+      if (st !== 'd_reg2' && mode === 'dw' && PAYON) { const g = await getDriver(chat); if (g && !canViloyat(g)) { await clrSt(chat); return send(chat, '🔒 Viloyat taksisi yopiq. «' + B.line + '» → «💳» tugma orqali qolgan summani to‘lang.', { reply_markup: await menuKb(chat) }); } }
       await edit(chat, mid, '✅ Liniya: <b>' + (await routeOf(sd.from_id, rid)) + '</b>');
       if (st === 'd_reg2') return finishReg(chat, from, sd, sd.from_id, rid);
       const dr = await getDriver(chat);
       if (!dr) return home(chat, 'Avval «' + B.drv + '» orqali ro‘yxatdan o‘ting.');
-      await db.q('update ln_drivers set region_id=$2, to_id=$3, kind=$4 where tg_id=$1', [chat, sd.from_id, rid, mode === 'dw' ? 'viloyat' : 'mahalla']); await clrSt(chat);
+      const nk = mode === 'dw' ? 'viloyat' : 'mahalla';
+      await db.q('update ln_drivers set region_id=$2, to_id=$3, kind=$4, plan=case when $5::boolean then $4::text else plan end where tg_id=$1', [chat, sd.from_id, rid, nk, !PAYON]); await clrSt(chat);
       return send(chat, '📍 Liniyangiz: <b>' + (await routeOf(sd.from_id, rid)) + '</b>' + (isPaid(dr) ? '\nEndi «' + B.on + '» ni bosing.' : '\nLiniyaga chiqish uchun oylik to‘lov kerak.'), { reply_markup: await menuKb(chat) });
     }
     return;
@@ -799,7 +883,7 @@ async function ensureMenu(force) {
     if (r && r.ok) await setSetting('menu_off', '2'); else menuDone = false;
   } catch (e) { menuDone = false; }
 }
-const CB = new Set(['tx', 'pk', 'kd', 'rg', 'rs', 'pw', 'la', 'ld', 'lc', 'pc', 'pr', 'rt', 'kc', 'pa', 'am', 'ia', 'on', 'ch', 'bc', 'bk', 'dc']);
+const CB = new Set(['tx', 'pk', 'kd', 'rg', 'rs', 'pw', 'la', 'ld', 'lc', 'pc', 'pr', 'rt', 'kc', 'pp', 'pa', 'am', 'ia', 'on', 'ch', 'bc', 'bk', 'dc']);
 const menuChats = new Set();
 async function chatMenu(chat) {
   if (!chat || menuChats.has(chat)) return;
@@ -846,6 +930,7 @@ async function refreshMenu(up) {
 }
 async function handle(up) {
   menuFresh = 0;
+  await ensureSub(); await loadPay();
   const r = await handleInner(up);
   await refreshMenu(up);
   return r;
