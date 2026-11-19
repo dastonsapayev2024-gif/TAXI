@@ -173,7 +173,7 @@ async function menuKb(id) {
   menuFresh = id;
   const d = await getDriver(id), canOrder = !(termOn(d) && !isAdmin(id)), rows = [];
   if (canOrder) rows.push([{ text: B.taxi }]);
-  if (d) rows.push([{ text: d.online ? B.off : B.on }, { text: B.pay }], [{ text: B.line }, { text: B.me }]); else rows.push([{ text: B.drv }]);
+  if (d) rows.push((PAYON || isAdmin(id)) ? [{ text: d.online ? B.off : B.on }, { text: B.pay }] : [{ text: d.online ? B.off : B.on }], [{ text: B.line }, { text: B.me }]); else rows.push([{ text: B.drv }]);
   if (isAdmin(id)) rows.push([{ text: B.adm }]);
   return { keyboard: rows, resize_keyboard: true };
 }
@@ -262,7 +262,7 @@ async function showMe(chat) {
   if (!d) return home(chat, 'Siz haydovchi emassiz. «' + B.drv + '» ni bosing.');
   const rn = d.region_id && d.to_id ? await routeOf(d.region_id, d.to_id) : '—', pl = d.plan === 'viloyat' ? 'viloyat' : 'mahalla';
   let money;
-  if (!PAYON) money = '🎁 Hozir xizmat <b>bepul</b> (to‘lov kerak emas)';
+  if (!PAYON) money = '🎁 Hozir xizmat <b>bepul</b>';
   else money = '💰 Tarif: <b>' + planName(pl) + '</b> · ' + fmt(await priceOf(pl)) + ' so‘m/oy\n' + (termOn(d) ? '✅ Amal qiladi: <b>' + fdate(d.paid_until) + '</b> gacha (' + daysLeft(d.paid_until) + ' kun)' : '⚠️ To‘lov yo‘q yoki muddati tugagan') +
     (pl === 'mahalla' ? '\n🔒 Viloyat taksisi yopiq. «' + B.line + '» orqali ochishingiz mumkin.' : '');
   return home(chat, '🚕 <b>' + esc(d.name) + '</b>\n📞 ' + esc(showPhone(d.phone)) + '\n🚗 ' + esc(d.car) + '\n🏷 Hozirgi liniya: ' + (d.kind === 'viloyat' ? 'Viloyat taksisi' : 'Mahalla taksisi') + '\n📍 Liniyangiz: <b>' + rn +
@@ -302,7 +302,7 @@ const payCard = async () => setting('card', '');
 async function startPay(chat) {
   const d = await getDriver(chat);
   if (!d) return home(chat, 'Avval «' + B.drv + '» orqali ro‘yxatdan o‘ting.');
-  if (!PAYON) return home(chat, '🎁 <b>Hozir xizmat hamma uchun bepul.</b>\nTo‘lov shart emas, «' + B.on + '» ni bosib ishlayvering.\n\nTo‘lov joriy etilsa, oldindan xabar beramiz.');
+  if (!PAYON) return home(chat, '🎁 <b>Hozir xizmat hamma uchun bepul.</b>\nTo‘lov shart emas, «' + B.on + '» ni bosib ishlayvering.');
   if (!(await payCard())) return home(chat, 'Karta ma’lumoti hali kiritilmagan. Admin bilan bog‘laning.');
   const pm = await priceOf('mahalla'), pv = await priceOf('viloyat'), up = await upgPrice(), act = termOn(d), pl = d.plan === 'viloyat' ? 'viloyat' : 'mahalla';
   if (act && pl === 'viloyat') return payShow(chat, d, 'v');
@@ -496,8 +496,14 @@ async function adminMenu(chat, what, arg) {
       [{ text: '🟢 Liniyadagilarga', callback_data: 'bc:on' }]] } });
   }
   if (what === 'set') {
-    return send(chat, '⚙️ <b>Sozlamalar</b>\nRejim: ' + (PAYON ? '💳 <b>PULLIK</b>' : '🎁 <b>BEPUL</b> (hamma haydovchi bepul)') + '\n🏘 Mahalla taksisi: <b>' + fmt(await priceOf('mahalla')) + '</b> so‘m/oy\n🛣 Viloyat + Mahalla: <b>' + fmt(await priceOf('viloyat')) + '</b> so‘m/oy\n⬆️ Mahalladan viloyatga o‘tish: <b>' + fmt(await upgPrice()) + '</b> so‘m\nMuddat: ' + (await payDays()) + ' kun\nKarta: <code>' + esc(await setting('card', '— kiritilmagan —')) + '</code>\n🚖 Yo‘lovchilar: doim bepul\n\n' +
+    const txt0 = (chat, '⚙️ <b>Sozlamalar</b>\nRejim: ' + (PAYON ? '💳 <b>PULLIK</b>' : '🎁 <b>BEPUL</b> (hamma haydovchi bepul)') + '\n🏘 Mahalla taksisi: <b>' + fmt(await priceOf('mahalla')) + '</b> so‘m/oy\n🛣 Viloyat + Mahalla: <b>' + fmt(await priceOf('viloyat')) + '</b> so‘m/oy\n⬆️ Mahalladan viloyatga o‘tish: <b>' + fmt(await upgPrice()) + '</b> so‘m\nMuddat: ' + (await payDays()) + ' kun\nKarta: <code>' + esc(await setting('card', '— kiritilmagan —')) + '</code>\n🚖 Yo‘lovchilar: doim bepul\n\n' +
       '<b>O‘zgartirish:</b>\n<code>/pullik</code> — pullik rejimni yoqish\n<code>/bepul</code> — hamma uchun bepul\n<code>/karta 8600 1234 5678 9012 Ism</code>\n<code>/narx_m 20000</code> — Mahalla narxi\n<code>/narx_v 30000</code> — Viloyat + Mahalla narxi\n<code>/kun 30</code> — muddat\n<code>/salom Matn</code> — bosh xabar matni\n<code>/yoq ID</code> yoki <code>/yoq ID 15</code> — haydovchini yoqish\n<code>/toxtat ID</code> — to‘xtatish\n<code>/blok ID</code>, <code>/blokdan ID</code> — bloklash\n<code>/xabar ID matn</code> — bitta odamga xabar');
+    return send(chat, txt0, { reply_markup: { inline_keyboard: [
+      [{ text: PAYON ? '🎁 Bepul qilish (hamma uchun)' : '💳 Pullikni yoqish (hamma ko‘radi)', callback_data: 'am:pay' }],
+      [{ text: '🏘 Mahalla narxi: ' + fmt(await priceOf('mahalla')), callback_data: 'am:np:m' }, { text: '🛣 Viloyat narxi: ' + fmt(await priceOf('viloyat')), callback_data: 'am:np:v' }],
+      [{ text: '📅 Muddat: ' + (await payDays()) + ' kun', callback_data: 'am:np:d' }, { text: '💳 Karta', callback_data: 'am:np:c' }],
+      [{ text: '✏️ Tugma nomlari va matnlar', callback_data: 'am:tx' }],
+      [{ text: '🧪 Sinov: o‘zimni qayta ro‘yxatdan o‘tkazish', callback_data: 'am:rst' }]] } });
   }
   if (what === 'tx') {
     await loadTx(true);
@@ -675,6 +681,14 @@ async function onMessage(m) {
   if (t === B.adm && admin) return send(chat, '🛠 <b>Admin paneli</b>', { reply_markup: ADM_KB });
 
   const { st, d } = await getSt(chat);
+  if (admin && st === 'a_np') {
+    await clrSt(chat);
+    const w = d.w, v = t.replace(/[\s,]/g, '');
+    if (w === 'c') await adminCmd(chat, '/karta ' + t.trim());
+    else if (/^\d{1,8}$/.test(v)) await adminCmd(chat, w === 'd' ? '/kun ' + v : '/narx_' + w + ' ' + v);
+    else return send(chat, '❌ Faqat raqam yozing. Qayta: Admin → ⚙️ Sozlamalar.');
+    return adminMenu(chat, 'set');
+  }
   if (admin && st === 'a_tx') {
     const x = TXD[d.i]; await clrSt(chat);
     if (!x || t.length < 1) return send(chat, 'Bekor qilindi.');
@@ -709,7 +723,7 @@ async function onMessage(m) {
     d.car = t.slice(0, 60); await setSt(chat, 'd_kind', d);
     const pm = await priceOf('mahalla'), pv = await priceOf('viloyat');
     return send(chat, '4/4 <b>Qaysi tarifni tanlaysiz?</b>\n\n🏘 <b>Mahalla taksisi</b> — o‘z mahallangiz/qishlog‘ingiz ichida' + (PAYON ? '\n   💰 <b>' + fmt(pm) + ' so‘m/oy</b>' : '') + '\n🛣 <b>Viloyat + Mahalla</b> — viloyatlar orasida ham, mahallada ham ishlaysiz' + (PAYON ? '\n   💰 <b>' + fmt(pv) + ' so‘m/oy</b>' : '') + '\n\n' +
-      (PAYON ? '💡 Mahalla tarifini olib, keyin qolgan <b>' + fmt(await upgPrice()) + ' so‘m</b> ni qo‘shib Viloyatga o‘tish mumkin.' : '🎁 Hozir <b>hamma uchun bepul</b>. To‘lov joriy etilsa, oldindan xabar beramiz.'), { reply_markup: { inline_keyboard: [
+      (PAYON ? '💡 Mahalla tarifini olib, keyin qolgan <b>' + fmt(await upgPrice()) + ' so‘m</b> ni qo‘shib Viloyatga o‘tish mumkin.' : ''), { reply_markup: { inline_keyboard: [
       [{ text: '🏘 Mahalla taksisi' + (PAYON ? ' · ' + fmt(pm) + ' so‘m/oy' : ''), callback_data: 'kd:m' }],
       [{ text: '🛣 Viloyat + Mahalla' + (PAYON ? ' · ' + fmt(pv) + ' so‘m/oy' : ''), callback_data: 'kd:v' }]] } });
   }
@@ -853,6 +867,9 @@ async function onCallback(q) {
   if (k === 'am' || k === 'bc' || k === 'bk' || k === 'dc') {
     if (!admin) return answer(q, 'Faqat admin', true);
     await answer(q);
+    if (k === 'am' && d[1] === 'pay') { await adminCmd(chat, PAYON ? '/bepul' : '/pullik'); return adminMenu(chat, 'set'); }
+    if (k === 'am' && d[1] === 'np') { const nm = { m: 'Mahalla taksisi narxi (so‘m/oy)', v: 'Viloyat + Mahalla narxi (so‘m/oy)', d: 'Muddat (kun)', c: 'Karta (raqam va ism)' }[d[2]]; if (!nm) return; await setSt(chat, 'a_np', { w: d[2] }); return send(chat, '✏️ <b>' + nm + '</b>\n' + (d[2] === 'c' ? 'Masalan: <code>8600 1234 5678 9012 Ism</code>' : 'Faqat raqam yozing, masalan: <code>' + (d[2] === 'd' ? '30' : '25000') + '</code>')); }
+    if (k === 'am' && d[1] === 'rst') { await db.q('delete from ln_drivers where tg_id=$1', [chat]); await clrSt(chat); return home(chat, '🧪 Haydovchi ro‘yxatingiz o‘chirildi. Endi «' + B.drv + '» ni bosib, boshidan sinab ko‘ring.'); }
     if (k === 'am') return adminMenu(chat, d[1], d[2]);
     if (k === 'bc') { await setSt(chat, 'a_bc', { t: d[1] }); return send(chat, '✍️ Xabar matnini yozing (' + ({ all: 'botdagi hammaga', drv: 'barcha haydovchilarga', on: 'liniyadagilarga' }[d[1]] || '') + ').\nBekor qilish: «' + B.cancel + '».', { reply_markup: { keyboard: [[{ text: B.cancel }]], resize_keyboard: true } }); }
     if (k === 'bk') {
