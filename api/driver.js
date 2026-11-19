@@ -4,6 +4,7 @@ const db = require('./_db');
 const OK_ID = /^[A-Za-z0-9]{4,12}$/;
 const cleanName = v => { const n = String(v || '').replace(/[<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 40); return n.split(' ').filter(w => w.length > 1).length >= 2 ? n : ''; };
 const phoneOf = v => { let d = String(v || '').replace(/\D/g, ''); if (d.length === 9) d = '998' + d; return /^998\d{9}$/.test(d) ? d : ''; };
+let OC = { r: null, t: 0 }; // buyurtmalar ro'yxati keshi (3 s)
 const ON_HOURS = 3;
 const isOn = d => !!(d && d.online && d.seen && Date.now() - new Date(d.seen).getTime() < ON_HOURS * 3600 * 1000);
 const nameOf = u => [u.first_name, u.last_name].filter(Boolean).join(' ').slice(0, 40) || 'Haydovchi';
@@ -50,9 +51,11 @@ module.exports = async (req, res) => {
     }
     if (b.action === 'orders') {
       db.q("update drivers set seen=now() where tg_id=$1 and online=true and (seen is null or seen < now() - interval '60 seconds')", [me]).catch(() => {});
-      const r = await db.q("select id, price, fee, km, fromp, top, name, floor(extract(epoch from (now() - created)))::int age from orders where status='new' and created > now() - make_interval(mins => $1) order by created desc limit 30", [CFG.expireMin]);
+      let r;
+      if (OC.r && Date.now() - OC.t < 3000) r = OC.r;
+      else { r = await db.q("select id, price, fee, km, fromp, top, name, floor(extract(epoch from (now() - created)))::int age from orders where status='new' and created > now() - make_interval(mins => $1) order by created desc limit 30", [CFG.expireMin]); OC = { r, t: Date.now() }; }
       const free = d.free_left > 0;
-      return res.status(200).json({ ok: true, orders: r.rows.map(o => ({ id: o.id, price: o.price, fee: free ? 0 : o.fee, km: o.km, from: o.fromp, to: o.top, pname: o.name, age: o.age })), balance: d.balance, free: d.free_left });
+      return res.status(200).json({ ok: true, orders: r.rows.map(o => ({ id: o.id, price: o.price, fee: free ? 0 : o.fee, km: o.km, from: o.fromp, to: o.top, pname: o.name, age: o.age + Math.floor((Date.now() - OC.t) / 1000) })), balance: d.balance, free: d.free_left });
     }
     if (b.action === 'car') {
       const car = String(b.car || '').replace(/\s+/g, ' ').trim().slice(0, 60);
