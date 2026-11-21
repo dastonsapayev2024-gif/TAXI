@@ -91,6 +91,32 @@ do $pop$ declare r record; begin
       on conflict do nothing;
   end loop;
 end $pop$;
+
+-- ===== Viloyat taksisi: har viloyatda kamida 20 ta eng gavjum yo'nalish (tuman/shahar + aeroport, vokzal, katta bozor) =====
+do $pop2$ declare r record; begin
+  for r in select * from (values
+  ('Xorazm', array['Tuproqqal‘a','Pitnak','Qorovul','Urganch aeroporti','Urganch vokzali','Xiva vokzali','Ichan Qal‘a (Xiva)','Urganch bozori','Xiva bozori','Gipermarket (Urganch)']),
+  ('Toshkent shahri', array['Bektemir','Yangihayot','Toshkent aeroporti','Janubiy vokzal','Shimoliy vokzal','Chorsu bozori','Abu Sahiy bozori','Qo‘yliq bozori','Minor','Ipak Yo‘li']),
+  ('Toshkent viloyati', array['Piskent','Bo‘ka','Chinoz','Oqqo‘rg‘on','Bo‘stonliq','G‘azalkent','Keles','Do‘stobod','Yangibozor','Toytepa']),
+  ('Samarqand', array['Nurobod','Toyloq','Qo‘shrabot','Paxtachi','Gulobod','Samarqand aeroporti','Samarqand vokzali','Siyob bozori','Registon','Juma']),
+  ('Buxoro', array['Olot','Qorovulbozor','Peshku','Galaosiyo','Buxoro aeroporti','Buxoro vokzali','Lab-i Hovuz','Gazli','Chor Minor','Buxoro bozori','Ark qal‘asi','Yangibozor']),
+  ('Navoiy', array['Konimex','Navbahor','Tomdi','Beshrabot','Yangirabod','Tomdibuloq','Navoiy aeroporti','Navoiy vokzali','Zarafshon aeroporti','Navoiy bozori','Chashma (Nurota)','Sarmish','Zarafshon bozori']),
+  ('Qashqadaryo', array['Qamashi','Kasbi','Mirishkor','Nishon','Ko‘kdala','Beshkent','Mug‘lon','Qarshi aeroporti','Qarshi vokzali','Shahrisabz aeroporti','Qarshi bozori']),
+  ('Surxondaryo', array['Bandixon','Qiziriq','Muzrabot','Oltinsoy','Sariosiyo','Uzun','Uchqizil','Termiz aeroporti','Termiz vokzali','Denov bozori','Xalqobod','Sariq']),
+  ('Jizzax', array['Arnasoy','Mirzacho‘l','Sharof Rashidov','Yangiobod','Zafarobod','Zarbdor','G‘oliblar','Gagarin','Jizzax vokzali','Jizzax bozori','Bog‘don','Balandchaqir','Uchtepa']),
+  ('Sirdaryo', array['Oqoltin','Xovos','Mirzaobod','Sayxunobod','Dehqonobod','Navro‘z','Sayxun','Paxtaobod','Baxt','Qahramon','Farhod','Guliston vokzali','Guliston bozori','Yangiyer vokzali']),
+  ('Farg‘ona', array['Buvayda','Dang‘ara','Furqat','Qo‘shtepa','So‘x','Toshloq','Yozyovon','O‘zbekiston','Chimyon','Farg‘ona aeroporti','Qo‘qon vokzali']),
+  ('Andijon', array['Baliqchi','Buloqboshi','Izboskan','Jalaquduq','Ulug‘nor','Poytug‘','Kuyganyor','Andijon aeroporti','Andijon vokzali','Andijon bozori']),
+  ('Namangan', array['Norin','Yangiqo‘rg‘on','Toshbuloq','Haqqulobod','Jo‘mashuy','Namangan aeroporti','Namangan vokzali','Namangan bozori','Namangan tumani','Chust bozori','Pop vokzali']),
+  ('Qoraqalpog‘iston', array['Kegeyli','Qorao‘zak','Shumanay','Taxtako‘pir','Ellikqal‘a','Bo‘zatov','Mang‘it','Bo‘ston','Nukus aeroporti','Nukus vokzali','Nukus bozori'])
+  ) as t(v, arr) loop
+    insert into ln_regions(parent_id,name,kind,active)
+      select v.id, u.n, 'tuman', false from ln_regions v, unnest(r.arr) with ordinality as u(n,o)
+      where v.kind='viloyat' and v.parent_id is null and lower(v.name)=lower(r.v) order by u.o
+      on conflict do nothing;
+  end loop;
+end $pop2$;
+
 alter table drivers add column if not exists car text not null default '';
 alter table drivers add column if not exists phone text not null default '';
 create table if not exists settings(key text primary key, val text not null, updated timestamptz not null default now());
