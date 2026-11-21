@@ -136,32 +136,13 @@ async function regScreen(mode, nodeId) {
     rows.push([{ text: TX.back, callback_data: 'rg:' + mode + ':0' }]);
     return { text: HEAD[mode] + '\n📍 ' + esc(vnode ? vnode.name : '') + '\n\n' + esc(TX.hint_tuman), kb: { inline_keyboard: rows } };
   }
-  if (mode === 'tm' || mode === 'fm' || mode === 'dm' || mode === 'dt') {
-    const tum = [], mah = [];
-    for (const v of (await kids(null)).filter(k => k.active)) {
-      for (const t of (await kids(v.id)).filter(k => k.active)) {
-        tum.push(t);
-        for (const m of (await kids(t.id)).filter(k => k.active)) mah.push(m);
-      }
-    }
-    const srt = (x, y) => String(x.name).localeCompare(String(y.name), 'uz');
-    const all = mah.sort(srt).concat(tum.sort(srt));
-    if (!all.length) return { text: HEAD[mode] + '\n\nBu yerda hududlar hali qo‘shilmagan. Tez kunda ishga tushadi.', kb: { inline_keyboard: [] } };
-    return { text: HEAD[mode] + '\n\n' + esc(TX.hint_flat), kb: { inline_keyboard: all.map(k => [{ text: k.name, callback_data: 'rs:' + mode + ':' + k.id }]) } };
-  }
   // mahalla taksisi: faqat ishlaydigan hududlar; bitta viloyat bo'lsa to'g'ri o'shandan boshlanadi
-  const local = mode === 'tm' || mode === 'fm' || mode === 'dm';
+  const local = false;
   let solo = false;
-  if (local && !nodeId) {
-    const act = (await kids(null)).filter(k => k.active);
-    if (act.length === 1) { nodeId = act[0].id; solo = true; }
-  }
   const node = nodeId ? await reg(nodeId) : null, list = await kids(nodeId || null), rows = [];
-  if (local && node && node.kind === 'viloyat' && !node.parent_id) { const act = (await kids(null)).filter(k => k.active); solo = act.length === 1; }
   for (const k of list) {
     if (local && !k.active) continue;
     if (TUMAN_ONLY(mode) && k.kind === 'mahalla') continue;
-    if (!k.active) { rows.push([{ text: '🕓 ' + k.name, callback_data: 'ia:0' }]); continue; }
     const deep = k.kind === 'viloyat' || (!TUMAN_ONLY(mode) && k.kind === 'tuman' && (await kids(k.id)).length > 0);
     rows.push([{ text: k.name + (deep ? ' ›' : ''), callback_data: (deep ? 'rg:' : 'rs:') + mode + ':' + k.id }]);
   }
@@ -171,7 +152,7 @@ async function regScreen(mode, nodeId) {
   if (!node) hint = esc(TX.hint_root);
   else if (node.kind === 'viloyat' || TUMAN_ONLY(mode)) hint = esc(TX.hint_tuman);
   else hint = esc(TX.hint_mahalla).replace('{n}', esc(node.name));
-  const text = HEAD[mode] + (node && !(solo && node.kind === 'viloyat' && local) ? '\n📍 ' + esc(await pathName(node.id)) : '') + '\n\n' + hint + (list.some(k => !k.active) ? '\n<i>🕓 — tez kunda ishga tushadi</i>' : '');
+  const text = HEAD[mode] + (node && !(solo && node.kind === 'viloyat' && local) ? '\n📍 ' + esc(await pathName(node.id)) : '') + '\n\n' + hint + '';
   return { text: list.length ? text : HEAD[mode] + '\n\nBu yerda hududlar hali qo‘shilmagan. Tez kunda ishga tushadi.', kb: { inline_keyboard: rows } };
 }
 
@@ -872,7 +853,6 @@ async function onCallback(q) {
   if (k === 'rs') {
     const mode = d[1], rid = +d[2], node = await reg(rid);
     if (!node) return answer(q, 'Hudud topilmadi', true);
-    if (!node.active && !TUMAN_ONLY(mode)) return answer(q, '🕓 Bu hudud uchun xizmat tez kunda ishga tushadi.', true);
     await answer(q);
     const { st, d: sd } = await getSt(chat);
     if (mode === 'tm' || mode === 'pt') {
