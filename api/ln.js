@@ -139,12 +139,17 @@ async function regScreen(mode, nodeId) {
   // mahalla taksisi: faqat ishlaydigan hududlar; bitta viloyat bo'lsa to'g'ri o'shandan boshlanadi
   const local = false;
   let solo = false;
-  const node = nodeId ? await reg(nodeId) : null, list = await kids(nodeId || null), rows = [];
+  const node = nodeId ? await reg(nodeId) : null, list = await kids(nodeId || null), rows = [], btns = [];
   for (const k of list) {
     if (local && !k.active) continue;
     if (TUMAN_ONLY(mode) && k.kind === 'mahalla') continue;
     const deep = k.kind === 'viloyat' || (!TUMAN_ONLY(mode) && k.kind === 'tuman' && (await kids(k.id)).length > 0);
-    rows.push([{ text: k.name + (deep ? ' ›' : ''), callback_data: (deep ? 'rg:' : 'rs:') + mode + ':' + k.id }]);
+    btns.push({ text: k.name + (deep ? ' ›' : ''), callback_data: (deep ? 'rg:' : 'rs:') + mode + ':' + k.id });
+  }
+  // yonma-yon: qisqa nomlar 2 ustunda, uzunlari to'liq ko'rinishi uchun alohida qatorda
+  for (let n = 0; n < btns.length; n++) {
+    const a = btns[n], b = btns[n + 1];
+    if (b && a.text.length <= 15 && b.text.length <= 15) { rows.push([a, b]); n++; } else rows.push([a]);
   }
   if (node && node.kind === 'tuman' && !TUMAN_ONLY(mode)) rows.push([{ text: TX.whole.replace('{n}', node.name), callback_data: 'rs:' + mode + ':' + node.id }]);
   if (node && !(solo && node.kind === 'viloyat')) rows.push([{ text: TX.back, callback_data: 'rg:' + mode + ':' + (node.parent_id || 0) }]);
@@ -857,7 +862,7 @@ async function onCallback(q) {
     const { st, d: sd } = await getSt(chat);
     if (mode === 'tm' || mode === 'pt') {
       sd.to_id = rid; sd.to_text = await pathName(rid); await setSt(chat, 'p_reg', sd);
-      const sc = await regScreen(mode === 'tm' ? 'fm' : 'pf', 0);
+      const sc = await regScreen(mode === 'tm' ? 'fm' : 'pf', mode === 'tm' ? (node.parent_id || 0) : 0);
       return edit(chat, mid, '✅ Qayerga: <b>' + esc(await rname(rid)) + '</b>\n\n' + sc.text, { reply_markup: sc.kb });
     }
     if (mode === 'fm' || mode === 'pf') {
@@ -868,7 +873,7 @@ async function onCallback(q) {
     }
     if (mode === 'dm' || mode === 'dv') {
       sd.from_id = rid; await setSt(chat, st === 'd_reg' ? 'd_reg2' : 'd_chg2', sd);
-      const sc = await regScreen(mode === 'dm' ? 'dt' : 'dw', 0);
+      const sc = await regScreen(mode === 'dm' ? 'dt' : 'dw', mode === 'dm' ? (node.parent_id || 0) : 0);
       return edit(chat, mid, '✅ Qayerdan: <b>' + esc(await rname(rid)) + '</b>\n\n' + sc.text, { reply_markup: sc.kb });
     }
     if (mode === 'dt' || mode === 'dw') {
